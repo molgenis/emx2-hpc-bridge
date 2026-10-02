@@ -55,6 +55,7 @@ class TaskPoller:
         response = self.session.post(
             self.url,
             json={"query": JOBS_QUERY, "variables": CREATED_JOBS_VARIABLES},
+            timeout=30,
         )
         response.raise_for_status()
         jobs = response.json()["data"]["Jobs"] or []
