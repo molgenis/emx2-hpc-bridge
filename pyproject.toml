@@ -1,0 +1,12 @@
+[project]
+name = "emx2-hpc-bridge"
+version = "0.1.0"
+description = "Bridge between EMX2 and HPC jobs"
+requires-python = ">=3.11"
+dependencies = [
+    "python-dotenv",
+    "requests",
+]
+
+[project.scripts]
+emx2-hpc-bridge = "emx2_hpc_bridge.main:main"
