@@ -1,0 +1,37 @@
+version: 2.1
+
+jobs:
+  lint-and-test:
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - pip-v1-{{ checksum "pyproject.toml" }}
+            - pip-v1-
+      - run:
+          name: Install dependencies
+          command: pip install -e '.[dev]'
+      - save_cache:
+          key: pip-v1-{{ checksum "pyproject.toml" }}
+          paths:
+            - ~/.cache/pip
+      - run:
+          name: Check formatting (black)
+          command: black --check --diff .
+      - run:
+          name: Lint (flake8)
+          command: flake8 src tests
+      - run:
+          name: Run tests
+          command: |
+            mkdir -p test-results
+            pytest -v --junitxml=test-results/junit.xml
+      - store_test_results:
+          path: test-results
+
+workflows:
+  build:
+    jobs:
+      - lint-and-test
