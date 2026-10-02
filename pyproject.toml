@@ -10,3 +10,11 @@ dependencies = [
 
 [project.scripts]
 emx2-hpc-bridge = "emx2_hpc_bridge.main:main"
+
+[project.optional-dependencies]
+dev = ["pytest", "flake8", "black"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+include = '\.pyi?$'
