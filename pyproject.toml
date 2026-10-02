@@ -10,3 +10,5 @@ dependencies = [
 
 [project.scripts]
 emx2-hpc-bridge = "emx2_hpc_bridge.main:main"
+[project.optional-dependencies]
+dev = ["pytest"]
