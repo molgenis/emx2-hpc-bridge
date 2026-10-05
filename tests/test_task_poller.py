@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
+from emx2_hpc_bridge.job_store import JobStatus, JobStore
 from emx2_hpc_bridge.task_poller import TaskPoller
 
 
@@ -94,3 +95,26 @@ def test_run_logs_errors_and_keeps_polling(caplog):
     assert session.post.call_count == 2
     assert sleep.call_count == 2
     assert "Poll 1 failed" in caplog.text
+
+
+def test_job_is_stored_before_server_claim():
+    poller, session, _ = make_poller([{"id": "job-1"}])
+    calls = MagicMock()
+    poller.job_store = calls.store
+    poller.claim_job = calls.claim
+    poller.run(max_polls=1)
+    names = [c[0] for c in calls.mock_calls if c[0] in ("store.add_claimed", "claim")]
+    assert names == ["store.add_claimed", "claim"]
+
+
+def test_failed_server_claim_is_retried_on_next_poll():
+    poller, session, _ = make_poller([{"id": "job-1"}])
+    poller.job_store = JobStore(":memory:")
+    ok = session.post.return_value
+    failed = MagicMock()
+    failed.raise_for_status.side_effect = requests.HTTPError("500")
+    # poll 1: fetch ok, claim fails; poll 2: fetch ok, claim ok
+    session.post.side_effect = [ok, failed, ok, ok]
+    poller.run(max_polls=2)
+    assert session.post.call_count == 4
+    assert poller.job_store.get("job-1").status is JobStatus.CLAIMED

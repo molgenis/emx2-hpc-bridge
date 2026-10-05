@@ -1,5 +1,3 @@
-import sqlite3
-
 import pytest
 
 from emx2_hpc_bridge.job_store import JobStatus, JobStore
@@ -24,10 +22,12 @@ def test_get_returns_none_for_unknown_job(store):
     assert store.get("missing") is None
 
 
-def test_add_claimed_twice_raises(store):
-    store.add_claimed("job-1")
-    with pytest.raises(sqlite3.IntegrityError):
-        store.add_claimed("job-1")
+def test_add_claimed_twice_keeps_existing_record(store):
+    first = store.add_claimed("job-1")
+    store.update_status("job-1", JobStatus.SUBMITTED)
+    second = store.add_claimed("job-1")
+    assert second.claimed_at == first.claimed_at
+    assert second.status is JobStatus.SUBMITTED
 
 
 def test_update_status(store):

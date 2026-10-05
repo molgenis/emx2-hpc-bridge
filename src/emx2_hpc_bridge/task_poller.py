@@ -105,7 +105,9 @@ class TaskPoller:
         job = self.fetch_next_job()
         if job:
             print(f"Found job {job['id']}")
+            # Record locally before claiming on the server: if the server claim
+            # fails, the job stays CREATED and is retried on the next poll.
+            if self.job_store:
+                self.job_store.add_claimed(job["id"])
             claim_job = self.claim_job(job["id"])
             print(f"Claimed job {claim_job}")
-            if self.job_store:
-                self.job_store.add_claimed(claim_job)

@@ -33,14 +33,19 @@ class JobStore:
         self._conn.commit()
 
     def add_claimed(self, job_id: str) -> StoredJob:
-        """Record a newly claimed job with status CLAIMED."""
-        job = StoredJob(job_id, datetime.now(timezone.utc), JobStatus.CLAIMED)
+        """Record a claimed job with status CLAIMED.
+
+        Idempotent: if the job is already stored, the existing record is returned
+        unchanged, so a claim can safely be retried.
+        """
+        claimed_at = datetime.now(timezone.utc).isoformat()
         with self._conn:
             self._conn.execute(
-                "INSERT INTO jobs (job_id, claimed_at, status) VALUES (?, ?, ?)",
-                (job.job_id, job.claimed_at.isoformat(), job.status.value),
+                "INSERT OR IGNORE INTO jobs (job_id, claimed_at, status) "
+                "VALUES (?, ?, ?)",
+                (job_id, claimed_at, JobStatus.CLAIMED.value),
             )
-        return job
+        return self.get(job_id)
 
     def update_status(self, job_id: str, status: JobStatus) -> None:
         with self._conn:
