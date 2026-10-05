@@ -1,4 +1,5 @@
 from .config import Config
+from .job_store import JobStore
 from .task_poller import TaskPoller
 
 
@@ -11,6 +12,7 @@ def main():
         schema=Config.emx2_schema,
         token=Config.emx2_poller_jwt_token,
         poll_interval=Config.poll_interval,
+        job_store=JobStore(Config.db_path),
     )
     poller.run()
 

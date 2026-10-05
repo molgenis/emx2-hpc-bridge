@@ -41,3 +41,32 @@ def test_run_stops_after_max_polls():
     assert session.post.call_count == 3
     sleep.assert_called_with(5)
     assert sleep.call_count == 3
+
+
+def test_run_stores_claimed_job():
+    poller, _, _ = make_poller([{"id": "job-1"}])
+    poller.job_store = MagicMock()
+    poller.run(max_polls=1)
+    poller.job_store.add_claimed.assert_called_once_with("job-1")
+
+
+def test_claim_job_uses_passed_job_id():
+    poller, session, _ = make_poller([])
+    assert poller.claim_job("job-42") == "job-42"
+    variables = session.post.call_args.kwargs["json"]["variables"]
+    assert variables["value"][0]["id"] == "job-42"
+
+
+def test_fetch_next_job_returns_none_when_jobs_key_missing():
+    poller, session, _ = make_poller([])
+    session.post.return_value.json.return_value = {"data": {"Jobs_agg": {"count": 0}}}
+    assert poller.fetch_next_job() is None
+
+
+def test_run_does_nothing_when_no_jobs():
+    poller, session, _ = make_poller([])
+    session.post.return_value.json.return_value = {"data": {"Jobs_agg": {"count": 0}}}
+    poller.job_store = MagicMock()
+    poller.run(max_polls=2)
+    assert session.post.call_count == 2
+    poller.job_store.add_claimed.assert_not_called()
