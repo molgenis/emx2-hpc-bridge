@@ -1,9 +1,12 @@
+import logging
 import time
 from typing import Callable
 
 import requests
 
 from .job_store import JobStore
+
+logger = logging.getLogger(__name__)
 
 JOBS_QUERY = """
 query Jobs($filter: JobsFilter, $orderby: [Jobsorderby]) {
@@ -62,6 +65,8 @@ class TaskPoller:
             timeout=30,
         )
         response.raise_for_status()
+        if not response.content:
+            raise ValueError("Empty response from server when fetching jobs")
         # EMX2 omits the "Jobs" key entirely when no rows match the filter
         data = response.json().get("data") or {}
         jobs = data.get("Jobs") or []
@@ -82,16 +87,25 @@ class TaskPoller:
         return job_id
 
     def run(self, max_polls: int | None = None) -> None:
-        """Poll forever, or `max_polls` times if given."""
+        """Poll forever, or `max_polls` times if given.
+
+        Errors during a poll are logged and never stop the loop.
+        """
         polls = 0
         while max_polls is None or polls < max_polls:
             print(f"Polling for jobs (poll {polls + 1})...")
-            job = self.fetch_next_job()
-            if job:
-                print(f"Found job {job['id']}")
-                claim_job = self.claim_job(job["id"])
-                print(f"Claimed job {claim_job}")
-                if self.job_store:
-                    self.job_store.add_claimed(claim_job)
+            try:
+                self._poll_once()
+            except Exception:
+                logger.exception("Poll %d failed", polls + 1)
             polls += 1
             self._sleep(self.poll_interval)
+
+    def _poll_once(self) -> None:
+        job = self.fetch_next_job()
+        if job:
+            print(f"Found job {job['id']}")
+            claim_job = self.claim_job(job["id"])
+            print(f"Claimed job {claim_job}")
+            if self.job_store:
+                self.job_store.add_claimed(claim_job)

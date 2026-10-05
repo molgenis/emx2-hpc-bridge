@@ -1,4 +1,8 @@
+import logging
 from unittest.mock import MagicMock
+
+import pytest
+import requests
 
 from emx2_hpc_bridge.task_poller import TaskPoller
 
@@ -70,3 +74,23 @@ def test_run_does_nothing_when_no_jobs():
     poller.run(max_polls=2)
     assert session.post.call_count == 2
     poller.job_store.add_claimed.assert_not_called()
+
+
+def test_fetch_next_job_raises_on_empty_response():
+    poller, session, _ = make_poller([])
+    session.post.return_value.content = b""
+    with pytest.raises(ValueError):
+        poller.fetch_next_job()
+
+
+def test_run_logs_errors_and_keeps_polling(caplog):
+    poller, session, sleep = make_poller([])
+    session.post.side_effect = [
+        requests.ConnectionError("boom"),
+        session.post.return_value,
+    ]
+    with caplog.at_level(logging.ERROR):
+        poller.run(max_polls=2)
+    assert session.post.call_count == 2
+    assert sleep.call_count == 2
+    assert "Poll 1 failed" in caplog.text
