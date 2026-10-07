@@ -3,18 +3,18 @@ version: 2.1
 jobs:
   lint-and-test:
     docker:
-      - image: cimg/python:3.11
+      - image: cimg/python:3.9
     steps:
       - checkout
       - restore_cache:
           keys:
-            - pip-v1-{{ checksum "pyproject.toml" }}
-            - pip-v1-
+            - pip-py39-v1-{{ checksum "pyproject.toml" }}
+            - pip-py39-v1-
       - run:
           name: Install dependencies
           command: pip install -e '.[dev]'
       - save_cache:
-          key: pip-v1-{{ checksum "pyproject.toml" }}
+          key: pip-py39-v1-{{ checksum "pyproject.toml" }}
           paths:
             - ~/.cache/pip
       - run:
