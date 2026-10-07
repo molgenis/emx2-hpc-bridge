@@ -7,6 +7,7 @@ from typing import Callable
 import requests
 
 from .job_store import JobStore
+from .slurm_monitor import SlurmMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class TaskPoller:
         session: requests.Session | None = None,
         sleep: Callable[[float], None] = time.sleep,
         job_store: JobStore | None = None,
+        slurm_monitor: SlurmMonitor | None = None,
     ):
         self.url = f"{server.rstrip('/')}/{schema}/graphql"
         self.poll_interval = poll_interval
@@ -58,6 +60,7 @@ class TaskPoller:
         self.session.headers["x-molgenis-token"] = token
         self._sleep = sleep
         self.job_store = job_store
+        self.slurm_monitor = slurm_monitor
 
     def fetch_next_job(self) -> dict | None:
         """Return the oldest CREATED job, or None if there is none."""
@@ -103,7 +106,28 @@ class TaskPoller:
             polls += 1
             self._sleep(self.poll_interval)
 
+    def check_cluster(self) -> bool | None:
+        """Return whether an extraction job is running on the cluster.
+
+        Returns None when no monitor is configured or the check failed; a failing
+        check is logged and does not prevent claiming new jobs.
+        """
+        if self.slurm_monitor is None:
+            return None
+        try:
+            running = self.slurm_monitor.running_jobs()
+        except Exception:
+            logger.exception("Checking Slurm queue failed")
+            return None
+        if running:
+            for job in running:
+                print(f"Extraction job {job.job_id} running on cluster ({job.elapsed})")
+        else:
+            print("No extraction job running on cluster")
+        return bool(running)
+
     def _poll_once(self) -> None:
+        self.check_cluster()
         job = self.fetch_next_job()
         if job:
             print(f"Found job {job['id']}")

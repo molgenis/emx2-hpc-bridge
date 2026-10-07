@@ -47,6 +47,8 @@ cp .env.example .env
 | `EMX2_POLLER_JWT_TOKEN` | JWT token used to authenticate against EMX2       | yes      |
 | `POLL_INTERVAL`         | Seconds between polls (default `30`)              | no       |
 | `DB_PATH`               | Location to store sqlitedb (hpc que queue)        | no       |
+| `HPC_JOB_NAME`          | Slurm job name of the extraction job (default `cohort_extract`) | no |
+| `HPC_USER`              | Slurm user whose jobs are checked (default: current user) | no |
 
 `.env` is ignored by git; never commit real tokens.
 
