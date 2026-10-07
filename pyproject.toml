@@ -2,7 +2,7 @@
 name = "emx2-hpc-bridge"
 version = "0.1.0"
 description = "Bridge between EMX2 and HPC jobs"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 dependencies = [
     "python-dotenv",
     "requests",
@@ -12,9 +12,9 @@ dependencies = [
 emx2-hpc-bridge = "emx2_hpc_bridge.main:main"
 
 [project.optional-dependencies]
-dev = ["pytest", "flake8", "black"]
+dev = ["pytest", "flake8", "black==25.11.0"]
 
 [tool.black]
 line-length = 88
-target-version = ["py311"]
+target-version = ["py39"]
 include = '\.pyi?$'

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,14 +24,16 @@ class JobStore:
 
     def __init__(self, path: str = "jobs.db"):
         self._conn = sqlite3.connect(path)
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS jobs (
                 job_id TEXT PRIMARY KEY,
                 claimed_at TEXT NOT NULL,
                 status TEXT NOT NULL
                     CHECK (status IN ('claimed', 'submitted', 'completed'))
             )
-            """)
+            """
+        )
         self._conn.commit()
 
     def add_claimed(self, job_id: str) -> StoredJob:

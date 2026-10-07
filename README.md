@@ -12,7 +12,7 @@ The repo contains a set of scripts, docs, and config files that enables the [pap
 
 ### Prerequisites
 
-- Python 3.11 or newer
+- Python 3.9 or newer
 - git
 
 ### Setup
