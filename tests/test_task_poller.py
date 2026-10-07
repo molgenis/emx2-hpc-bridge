@@ -5,6 +5,7 @@ import pytest
 import requests
 
 from emx2_hpc_bridge.job_store import JobStatus, JobStore
+from emx2_hpc_bridge.slurm_monitor import SlurmJob
 from emx2_hpc_bridge.task_poller import TaskPoller
 
 
@@ -118,3 +119,39 @@ def test_failed_server_claim_is_retried_on_next_poll():
     poller.run(max_polls=2)
     assert session.post.call_count == 4
     assert poller.job_store.get("job-1").status is JobStatus.CLAIMED
+
+
+def test_poll_checks_cluster_before_fetching_jobs():
+    poller, _, _ = make_poller([])
+    calls = MagicMock()
+    calls.monitor.running_jobs.return_value = []
+    calls.fetch.return_value = None
+    poller.slurm_monitor = calls.monitor
+    poller.fetch_next_job = calls.fetch
+    poller.run(max_polls=1)
+    assert [c[0] for c in calls.mock_calls] == ["monitor.running_jobs", "fetch"]
+
+
+def test_check_cluster_reports_running_job():
+    poller, _, _ = make_poller([])
+    poller.slurm_monitor = MagicMock()
+    poller.slurm_monitor.running_jobs.return_value = [
+        SlurmJob("123", "cohort_extract", "RUNNING", "5:01")
+    ]
+    assert poller.check_cluster() is True
+
+
+def test_check_cluster_without_monitor_returns_none():
+    poller, _, _ = make_poller([])
+    assert poller.check_cluster() is None
+
+
+def test_failed_cluster_check_does_not_stop_claiming(caplog):
+    poller, _, _ = make_poller([{"id": "job-1"}])
+    poller.slurm_monitor = MagicMock()
+    poller.slurm_monitor.running_jobs.side_effect = FileNotFoundError("squeue")
+    poller.job_store = MagicMock()
+    with caplog.at_level(logging.ERROR):
+        poller.run(max_polls=1)
+    assert "Checking Slurm queue failed" in caplog.text
+    poller.job_store.add_claimed.assert_called_once_with("job-1")

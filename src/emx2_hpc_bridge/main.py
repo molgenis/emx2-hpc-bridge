@@ -2,6 +2,7 @@ import logging
 
 from .config import Config
 from .job_store import JobStore
+from .slurm_monitor import SlurmMonitor
 from .task_poller import TaskPoller
 
 
@@ -18,6 +19,7 @@ def main():
         token=Config.emx2_poller_jwt_token,
         poll_interval=Config.poll_interval,
         job_store=JobStore(Config.db_path),
+        slurm_monitor=SlurmMonitor(job_name=Config.hpc_job_name, user=Config.hpc_user),
     )
     poller.run()
 
