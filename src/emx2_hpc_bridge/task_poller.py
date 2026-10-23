@@ -8,6 +8,7 @@ from urllib.parse import urljoin
 
 import requests
 
+from .emx2_status import Emx2JobStatus
 from .job_store import JobStore
 from .job_workspace import JobPaths, JobWorkspace
 from .slurm_monitor import SlurmMonitor
@@ -38,9 +39,16 @@ query Jobs($filter: JobsFilter, $orderby: [Jobsorderby]) {
 """
 
 CREATED_JOBS_VARIABLES = {
-    "filter": {"status": {"equals": [{"label": "CREATED"}]}},
+    "filter": {"status": {"equals": [{"label": Emx2JobStatus.CREATED.value}]}},
     "orderby": [{"mg_insertedOn": "ASC"}],
 }
+
+# The input file is gone for good; retrying will not help
+MISSING_INPUT_HTTP_CODES = (404, 410)
+
+
+class InputUnavailableError(Exception):
+    """The job's input can never be downloaded, so the job cannot run."""
 
 
 class TaskPoller:
@@ -83,33 +91,49 @@ class TaskPoller:
         jobs = data.get("Jobs") or []
         return jobs[0] if jobs else None
 
-    def claim_job(self, job_id: str) -> str:
-        """Claim a job by setting its status to PENDING; returns the job id."""
-        claim_query = """
+    def set_status(self, job_id: str, status: Emx2JobStatus) -> None:
+        """Set the status of a job on the server."""
+        query = """
         mutation update($value:[JobsInput]){update(Jobs:$value){message}}
         """
-        variables = {"value": [{"id": job_id, "status": {"label": "PENDING"}}]}
+        label = Emx2JobStatus(status).value
+        variables = {"value": [{"id": job_id, "status": {"label": label}}]}
         response = self.session.post(
             self.url,
-            json={"query": claim_query, "variables": variables},
+            json={"query": query, "variables": variables},
             timeout=30,
         )
         response.raise_for_status()
+
+    def claim_job(self, job_id: str) -> str:
+        """Claim a job by setting its status to PENDING; returns the job id."""
+        self.set_status(job_id, Emx2JobStatus.PENDING)
         return job_id
+
+    def fail_job(self, job_id: str) -> None:
+        """Mark a job FAILED, so it leaves the CREATED queue."""
+        self.set_status(job_id, Emx2JobStatus.FAILED)
 
     def download_input(self, job: dict, paths: JobPaths) -> None:
         """Download the job's input file to `paths.input_file`.
 
         Written to a temporary file first, so an interrupted download never
         leaves a partial PDF behind that looks complete.
+
+        Raises InputUnavailableError when the input is missing for good; any
+        other error is assumed transient and the download is retried later.
         """
         file_info = job.get("input") or {}
         if not file_info.get("url"):
-            raise ValueError(f"Job {job['id']} has no input file")
+            raise InputUnavailableError(f"Job {job['id']} has no input file")
         # EMX2 returns file urls relative to the server
         url = urljoin(f"{self.server}/", file_info["url"])
         partial = paths.input_file.with_name(paths.input_file.name + ".part")
         with self.session.get(url, stream=True, timeout=60) as response:
+            if response.status_code in MISSING_INPUT_HTTP_CODES:
+                raise InputUnavailableError(
+                    f"Input of job {job['id']} not found (HTTP {response.status_code})"
+                )
             response.raise_for_status()
             with open(partial, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
@@ -156,13 +180,20 @@ class TaskPoller:
         job = self.fetch_next_job()
         if job:
             print(f"Found job {job['id']}")
+            if self.workspace:
+                paths = self.workspace.prepare(job["id"])
+                try:
+                    self.download_input(job, paths)
+                except InputUnavailableError:
+                    # Without failing it, this job would stay the oldest CREATED
+                    # job and block every job behind it
+                    logger.exception("Failing job %s", job["id"])
+                    self.fail_job(job["id"])
+                    return
+                print(f"Stored input of job {job['id']} in {paths.input_file}")
             # Record locally before claiming on the server: if the server claim
             # fails, the job stays CREATED and is retried on the next poll.
             if self.job_store:
                 self.job_store.add_claimed(job["id"])
-            if self.workspace:
-                paths = self.workspace.prepare(job["id"])
-                self.download_input(job, paths)
-                print(f"Stored input of job {job['id']} in {paths.input_file}")
             claim_job = self.claim_job(job["id"])
             print(f"Claimed job {claim_job}")
