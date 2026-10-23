@@ -14,3 +14,4 @@ class Config:
     # Not prefixed with SLURM_: Slurm itself sets SLURM_JOB_NAME inside jobs
     hpc_job_name = os.getenv("HPC_JOB_NAME", "cohort_extract")
     hpc_user = os.getenv("HPC_USER") or None
+    hpc_sbatch_script = os.getenv("HPC_SBATCH_SCRIPT", "run_cluster_cohort.sbatch")

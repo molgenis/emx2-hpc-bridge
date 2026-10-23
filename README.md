@@ -49,6 +49,7 @@ cp .env.example .env
 | `DB_PATH`               | Location to store sqlitedb (hpc que queue)        | no       |
 | `HPC_JOB_NAME`          | Slurm job name of the extraction job (default `cohort_extract`) | no |
 | `HPC_USER`              | Slurm user whose jobs are checked (default: current user) | no |
+| `HPC_SBATCH_SCRIPT`     | sbatch script that runs the extraction; called with the EMX2 job id as argument (default `run_cluster_cohort.sbatch`) | no |
 
 `.env` is ignored by git; never commit real tokens.
 

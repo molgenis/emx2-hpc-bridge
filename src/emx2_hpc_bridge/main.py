@@ -20,6 +20,7 @@ def main():
         poll_interval=Config.poll_interval,
         job_store=JobStore(Config.db_path),
         slurm_monitor=SlurmMonitor(job_name=Config.hpc_job_name, user=Config.hpc_user),
+        sbatch_script=Config.hpc_sbatch_script,
     )
     poller.run()
 

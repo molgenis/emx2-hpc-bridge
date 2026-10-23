@@ -60,3 +60,18 @@ class SlurmMonitor:
 
     def is_job_running(self) -> bool:
         return bool(self.running_jobs())
+
+    def submit_job(self, script: str, *args: str) -> str:
+        """Submit `script` with sbatch under the extraction job name.
+
+        Returns the Slurm job id.
+        """
+        result = self._run(
+            ["sbatch", "--parsable", f"--job-name={self.job_name}", script, *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        # --parsable prints "jobid" or "jobid;cluster"
+        return result.stdout.strip().split(";", 1)[0]

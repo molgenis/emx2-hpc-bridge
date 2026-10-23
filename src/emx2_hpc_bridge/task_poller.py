@@ -6,7 +6,7 @@ from typing import Callable
 
 import requests
 
-from .job_store import JobStore
+from .job_store import JobStatus, JobStore
 from .slurm_monitor import SlurmMonitor
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ class TaskPoller:
         sleep: Callable[[float], None] = time.sleep,
         job_store: JobStore | None = None,
         slurm_monitor: SlurmMonitor | None = None,
+        sbatch_script: str | None = None,
     ):
         self.url = f"{server.rstrip('/')}/{schema}/graphql"
         self.poll_interval = poll_interval
@@ -61,6 +62,7 @@ class TaskPoller:
         self._sleep = sleep
         self.job_store = job_store
         self.slurm_monitor = slurm_monitor
+        self.sbatch_script = sbatch_script
 
     def fetch_next_job(self) -> dict | None:
         """Return the oldest CREATED job, or None if there is none."""
@@ -107,33 +109,76 @@ class TaskPoller:
             self._sleep(self.poll_interval)
 
     def check_cluster(self) -> bool | None:
-        """Return whether an extraction job is running on the cluster.
+        """Return whether an extraction job is queued or running on the cluster.
+
+        Queued (e.g. PENDING) jobs count as busy, so a job submitted on a previous
+        poll is not submitted twice before Slurm starts it.
 
         Returns None when no monitor is configured or the check failed; a failing
-        check is logged and does not prevent claiming new jobs.
+        check is logged and no jobs are claimed or submitted in that poll.
         """
         if self.slurm_monitor is None:
             return None
         try:
-            running = self.slurm_monitor.running_jobs()
+            jobs = self.slurm_monitor.list_jobs()
         except Exception:
             logger.exception("Checking Slurm queue failed")
             return None
-        if running:
-            for job in running:
-                print(f"Extraction job {job.job_id} running on cluster ({job.elapsed})")
+        if jobs:
+            for job in jobs:
+                print(
+                    f"Extraction job {job.job_id} {job.state} on cluster "
+                    f"({job.elapsed})"
+                )
         else:
             print("No extraction job running on cluster")
-        return bool(running)
+        return bool(jobs)
+
+    def submit_job(self, job_id: str) -> str:
+        """Start the extraction for `job_id` on the cluster.
+
+        Returns the Slurm job id.
+        """
+        # slurm_job_id = self.slurm_monitor.submit_job(self.sbatch_script, job_id)
+        if self.job_store:
+            self.job_store.update_status(job_id, JobStatus.SUBMITTED)
+        return slurm_job_id
 
     def _poll_once(self) -> None:
-        self.check_cluster()
+        # Only claim jobs that can be submitted right away: the cluster must be
+        # known to be free and there must be a script to submit.
+        if not self.sbatch_script or self.check_cluster() is not False:
+            return
+        if self._submit_claimed_job():
+            return
         job = self.fetch_next_job()
-        if job:
-            print(f"Found job {job['id']}")
-            # Record locally before claiming on the server: if the server claim
-            # fails, the job stays CREATED and is retried on the next poll.
-            if self.job_store:
-                self.job_store.add_claimed(job["id"])
-            claim_job = self.claim_job(job["id"])
-            print(f"Claimed job {claim_job}")
+        if not job:
+            return
+        print(f"Found job {job['id']}")
+        # Record locally before claiming on the server: if the server claim
+        # fails, the job is submitted from the store on the next poll.
+        if self.job_store:
+            self.job_store.add_claimed(job["id"])
+        claim_job = self.claim_job(job["id"])
+        print(f"Claimed job {claim_job}")
+        slurm_job_id = self.submit_job(claim_job)
+        print(f"Submitted job {claim_job} to cluster as Slurm job {slurm_job_id}")
+
+    def _submit_claimed_job(self) -> bool:
+        """Submit the oldest job that was claimed but never submitted.
+
+        Returns whether a job was submitted; the cluster runs one job at a time,
+        so new jobs are only claimed once no claimed jobs are left.
+        """
+        if not self.job_store:
+            return False
+        claimed = self.job_store.list_by_status(JobStatus.CLAIMED)
+        if not claimed:
+            return False
+        job_id = claimed[0].job_id
+        print(f"Found claimed job {job_id} that was not submitted")
+        # The earlier server claim may have failed; claiming again is idempotent
+        self.claim_job(job_id)
+        slurm_job_id = self.submit_job(job_id)
+        print(f"Submitted job {job_id} to cluster as Slurm job {slurm_job_id}")
+        return True

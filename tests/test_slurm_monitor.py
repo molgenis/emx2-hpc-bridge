@@ -53,3 +53,16 @@ def test_squeue_failure_is_raised():
     run.side_effect = subprocess.CalledProcessError(1, "squeue")
     with pytest.raises(subprocess.CalledProcessError):
         monitor.list_jobs()
+
+
+def test_submit_job_calls_sbatch_and_returns_job_id():
+    monitor, run = make_monitor("4242;cluster\n")
+    assert monitor.submit_job("run.sbatch", "job-1") == "4242"
+    args = run.call_args.args[0]
+    assert args == [
+        "sbatch",
+        "--parsable",
+        "--job-name=cohort_extract",
+        "run.sbatch",
+        "job-1",
+    ]
