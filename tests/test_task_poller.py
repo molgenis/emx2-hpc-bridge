@@ -8,13 +8,34 @@ from emx2_hpc_bridge.emx2_status import Emx2JobStatus
 from emx2_hpc_bridge.job_store import JobStatus, JobStore
 from emx2_hpc_bridge.job_workspace import JobWorkspace
 from emx2_hpc_bridge.slurm_monitor import SlurmJob
-from emx2_hpc_bridge.task_poller import TaskPoller
+from emx2_hpc_bridge.task_poller import GraphQLError, TaskPoller
+
+
+def is_mutation(body):
+    return body["query"].lstrip().startswith("mutation")
+
+
+def mutation_ok():
+    response = MagicMock()
+    response.json.return_value = {"data": {"update": {"message": "1 Jobs updated"}}}
+    return response
+
+
+def mutation_rejected(message="Status label FAILED not found"):
+    response = MagicMock()
+    response.json.return_value = {"errors": [{"message": message}]}
+    return response
 
 
 def make_poller(jobs):
     session = MagicMock()
     session.headers = {}
+    # Queries get session.post.return_value, so tests can tweak it; mutations
+    # get an explicit success response
     session.post.return_value.json.return_value = {"data": {"Jobs": jobs}}
+    session.post.side_effect = lambda url, json, timeout: (
+        mutation_ok() if is_mutation(json) else session.post.return_value
+    )
     sleep = MagicMock()
     poller = TaskPoller(
         server="https://emx2.example/",
@@ -63,6 +84,27 @@ def test_claim_job_uses_passed_job_id():
     assert poller.claim_job("job-42") == "job-42"
     variables = session.post.call_args.kwargs["json"]["variables"]
     assert variables["value"][0]["id"] == "job-42"
+
+
+def test_set_status_raises_on_graphql_errors():
+    poller, session, _ = make_poller([])
+    session.post.side_effect = [mutation_rejected("no such label")]
+    with pytest.raises(GraphQLError, match="no such label"):
+        poller.set_status("job-1", Emx2JobStatus.FAILED)
+
+
+def test_rejected_fail_mutation_is_logged(tmp_path, caplog):
+    poller, session, _ = make_download_poller(tmp_path, {"id": "job-1", "input": None})
+    session.post.side_effect = lambda url, json, timeout: (
+        mutation_rejected() if is_mutation(json) else session.post.return_value
+    )
+    poller.claim_job = MagicMock()
+    with caplog.at_level(logging.ERROR):
+        poller.run(max_polls=1)
+    poller.claim_job.assert_not_called()
+    assert "Poll 1 failed" in caplog.text
+    assert "Setting job job-1 to FAILED was rejected" in caplog.text
+    assert "Status label FAILED not found" in caplog.text
 
 
 def test_fetch_next_job_returns_none_when_jobs_key_missing():
@@ -117,7 +159,7 @@ def test_failed_server_claim_is_retried_on_next_poll():
     failed = MagicMock()
     failed.raise_for_status.side_effect = requests.HTTPError("500")
     # poll 1: fetch ok, claim fails; poll 2: fetch ok, claim ok
-    session.post.side_effect = [ok, failed, ok, ok]
+    session.post.side_effect = [ok, failed, ok, mutation_ok()]
     poller.run(max_polls=2)
     assert session.post.call_count == 4
     assert poller.job_store.get("job-1").status is JobStatus.CLAIMED
@@ -228,17 +270,17 @@ class FakeJobsServer:
         self.status = {job["id"]: Emx2JobStatus.CREATED.value for job in jobs}
 
     def post(self, url, json, timeout):
-        response = MagicMock()
-        if json["query"].lstrip().startswith("mutation"):
+        if is_mutation(json):
             for row in json["variables"]["value"]:
                 self.status[row["id"]] = row["status"]["label"]
-        else:
-            created = [
-                job
-                for job in self.jobs
-                if self.status[job["id"]] == Emx2JobStatus.CREATED.value
-            ]
-            response.json.return_value = {"data": {"Jobs": created[:1]}}
+            return mutation_ok()
+        response = MagicMock()
+        created = [
+            job
+            for job in self.jobs
+            if self.status[job["id"]] == Emx2JobStatus.CREATED.value
+        ]
+        response.json.return_value = {"data": {"Jobs": created[:1]}}
         return response
 
 
