@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Callable
+from urllib.parse import urljoin
 
 import requests
 
 from .job_store import JobStore
+from .job_workspace import JobPaths, JobWorkspace
 from .slurm_monitor import SlurmMonitor
 
 logger = logging.getLogger(__name__)
@@ -53,14 +56,17 @@ class TaskPoller:
         sleep: Callable[[float], None] = time.sleep,
         job_store: JobStore | None = None,
         slurm_monitor: SlurmMonitor | None = None,
+        workspace: JobWorkspace | None = None,
     ):
-        self.url = f"{server.rstrip('/')}/{schema}/graphql"
+        self.server = server.rstrip("/")
+        self.url = f"{self.server}/{schema}/graphql"
         self.poll_interval = poll_interval
         self.session = session or requests.Session()
         self.session.headers["x-molgenis-token"] = token
         self._sleep = sleep
         self.job_store = job_store
         self.slurm_monitor = slurm_monitor
+        self.workspace = workspace
 
     def fetch_next_job(self) -> dict | None:
         """Return the oldest CREATED job, or None if there is none."""
@@ -90,6 +96,25 @@ class TaskPoller:
         )
         response.raise_for_status()
         return job_id
+
+    def download_input(self, job: dict, paths: JobPaths) -> None:
+        """Download the job's input file to `paths.input_file`.
+
+        Written to a temporary file first, so an interrupted download never
+        leaves a partial PDF behind that looks complete.
+        """
+        file_info = job.get("input") or {}
+        if not file_info.get("url"):
+            raise ValueError(f"Job {job['id']} has no input file")
+        # EMX2 returns file urls relative to the server
+        url = urljoin(f"{self.server}/", file_info["url"])
+        partial = paths.input_file.with_name(paths.input_file.name + ".part")
+        with self.session.get(url, stream=True, timeout=60) as response:
+            response.raise_for_status()
+            with open(partial, "wb") as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    f.write(chunk)
+        os.replace(partial, paths.input_file)
 
     def run(self, max_polls: int | None = None) -> None:
         """Poll forever, or `max_polls` times if given.
@@ -135,5 +160,9 @@ class TaskPoller:
             # fails, the job stays CREATED and is retried on the next poll.
             if self.job_store:
                 self.job_store.add_claimed(job["id"])
+            if self.workspace:
+                paths = self.workspace.prepare(job["id"])
+                self.download_input(job, paths)
+                print(f"Stored input of job {job['id']} in {paths.input_file}")
             claim_job = self.claim_job(job["id"])
             print(f"Claimed job {claim_job}")

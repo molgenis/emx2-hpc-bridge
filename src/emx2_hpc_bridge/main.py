@@ -2,6 +2,7 @@ import logging
 
 from .config import Config
 from .job_store import JobStore
+from .job_workspace import JobWorkspace
 from .slurm_monitor import SlurmMonitor
 from .task_poller import TaskPoller
 
@@ -20,6 +21,7 @@ def main():
         poll_interval=Config.poll_interval,
         job_store=JobStore(Config.db_path),
         slurm_monitor=SlurmMonitor(job_name=Config.hpc_job_name, user=Config.hpc_user),
+        workspace=JobWorkspace(Config.jobs_dir),
     )
     poller.run()
 

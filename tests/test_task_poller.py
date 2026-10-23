@@ -5,6 +5,7 @@ import pytest
 import requests
 
 from emx2_hpc_bridge.job_store import JobStatus, JobStore
+from emx2_hpc_bridge.job_workspace import JobWorkspace
 from emx2_hpc_bridge.slurm_monitor import SlurmJob
 from emx2_hpc_bridge.task_poller import TaskPoller
 
@@ -155,3 +156,45 @@ def test_failed_cluster_check_does_not_stop_claiming(caplog):
         poller.run(max_polls=1)
     assert "Checking Slurm queue failed" in caplog.text
     poller.job_store.add_claimed.assert_called_once_with("job-1")
+
+
+def make_download_poller(tmp_path, job):
+    poller, session, _ = make_poller([job])
+    poller.workspace = JobWorkspace(tmp_path)
+    download = session.get.return_value.__enter__.return_value
+    download.iter_content.return_value = [b"%PDF-", b"1.7"]
+    return poller, session, download
+
+
+PDF_JOB = {"id": "job-1", "input": {"url": "/extractJobs/api/file/Jobs/input/abc"}}
+
+
+def test_claimed_job_input_is_downloaded_to_workspace(tmp_path):
+    poller, session, _ = make_download_poller(tmp_path, PDF_JOB)
+    poller.run(max_polls=1)
+    url = session.get.call_args.args[0]
+    assert url == "https://emx2.example/extractJobs/api/file/Jobs/input/abc"
+    pdf = tmp_path / "job-job-1" / "input" / "document.pdf"
+    assert pdf.read_bytes() == b"%PDF-1.7"
+    assert not pdf.with_name("document.pdf.part").exists()
+    assert (tmp_path / "job-job-1" / "logs").is_dir()
+    assert (tmp_path / "job-job-1" / "output").is_dir()
+    claim = session.post.call_args.kwargs["json"]["variables"]
+    assert claim["value"][0]["status"] == {"label": "PENDING"}
+
+
+def test_failed_download_does_not_claim_job(tmp_path, caplog):
+    poller, session, download = make_download_poller(tmp_path, PDF_JOB)
+    download.raise_for_status.side_effect = requests.HTTPError("404")
+    poller.claim_job = MagicMock()
+    with caplog.at_level(logging.ERROR):
+        poller.run(max_polls=1)
+    poller.claim_job.assert_not_called()
+    assert not (tmp_path / "job-job-1" / "input" / "document.pdf").exists()
+
+
+def test_job_without_input_is_not_claimed(tmp_path):
+    poller, _, _ = make_download_poller(tmp_path, {"id": "job-1", "input": None})
+    poller.claim_job = MagicMock()
+    poller.run(max_polls=1)
+    poller.claim_job.assert_not_called()
