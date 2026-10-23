@@ -51,6 +51,10 @@ class InputUnavailableError(Exception):
     """The job's input can never be downloaded, so the job cannot run."""
 
 
+class GraphQLError(Exception):
+    """The server answered a GraphQL request with errors."""
+
+
 class TaskPoller:
     """Polls an EMX2 schema for jobs with status CREATED."""
 
@@ -104,6 +108,13 @@ class TaskPoller:
             timeout=30,
         )
         response.raise_for_status()
+        # EMX2 reports a rejected mutation as HTTP 200 with an "errors" field
+        errors = response.json().get("errors")
+        if errors:
+            messages = "; ".join(str(e.get("message", e)) for e in errors)
+            raise GraphQLError(
+                f"Setting job {job_id} to {label} was rejected: {messages}"
+            )
 
     def claim_job(self, job_id: str) -> str:
         """Claim a job by setting its status to PENDING; returns the job id."""
