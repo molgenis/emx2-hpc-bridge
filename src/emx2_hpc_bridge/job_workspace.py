@@ -3,7 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-INPUT_FILENAME = "document.pdf"
+
+def input_filename(filename: str | None, extension: str | None) -> str:
+    """Name for the stored input file: the uploaded file's name, with its
+    extension appended when the name does not already end with it.
+
+    Raises ValueError for names that are missing or could escape input/.
+    """
+    name = (filename or "").strip()
+    if not name or "/" in name or "\\" in name or name in (".", ".."):
+        raise ValueError(f"Invalid input filename: {filename!r}")
+    extension = (extension or "").strip().lstrip(".")
+    if extension and not name.lower().endswith(f".{extension.lower()}"):
+        name = f"{name}.{extension}"
+    return name
 
 
 @dataclass
@@ -13,9 +26,8 @@ class JobPaths:
     logs_dir: Path
     output_dir: Path
 
-    @property
-    def input_file(self) -> Path:
-        return self.input_dir / INPUT_FILENAME
+    def input_file(self, filename: str | None, extension: str | None) -> Path:
+        return self.input_dir / input_filename(filename, extension)
 
     def slurm_log_args(self) -> list[str]:
         """sbatch arguments that write the job's stdout/stderr into logs/."""
@@ -28,7 +40,7 @@ class JobPaths:
 class JobWorkspace:
     """Lays out a directory per claimed job on the cluster:
 
-    <root>/job-<id>/input/document.pdf
+    <root>/job-<id>/input/<input filename>
     <root>/job-<id>/logs/slurm-<slurm id>.{out,err}
     <root>/job-<id>/output/
     """

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Callable
 from urllib.parse import urljoin
 
@@ -125,8 +126,9 @@ class TaskPoller:
         """Mark a job FAILED, so it leaves the CREATED queue."""
         self.set_status(job_id, Emx2JobStatus.FAILED)
 
-    def download_input(self, job: dict, paths: JobPaths) -> None:
-        """Download the job's input file to `paths.input_file`.
+    def download_input(self, job: dict, paths: JobPaths) -> Path:
+        """Download the job's input file into `paths.input_dir`, under the
+        filename it was uploaded with; returns the stored file's path.
 
         Written to a temporary file first, so an interrupted download never
         leaves a partial PDF behind that looks complete.
@@ -137,9 +139,15 @@ class TaskPoller:
         file_info = job.get("input") or {}
         if not file_info.get("url"):
             raise InputUnavailableError(f"Job {job['id']} has no input file")
+        try:
+            input_file = paths.input_file(
+                file_info.get("filename"), file_info.get("extension")
+            )
+        except ValueError as e:
+            raise InputUnavailableError(f"Job {job['id']}: {e}") from e
         # EMX2 returns file urls relative to the server
         url = urljoin(f"{self.server}/", file_info["url"])
-        partial = paths.input_file.with_name(paths.input_file.name + ".part")
+        partial = input_file.with_name(input_file.name + ".part")
         with self.session.get(url, stream=True, timeout=60) as response:
             if response.status_code in MISSING_INPUT_HTTP_CODES:
                 raise InputUnavailableError(
@@ -149,7 +157,8 @@ class TaskPoller:
             with open(partial, "wb") as f:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
                     f.write(chunk)
-        os.replace(partial, paths.input_file)
+        os.replace(partial, input_file)
+        return input_file
 
     def run(self, max_polls: int | None = None) -> None:
         """Poll forever, or `max_polls` times if given.
@@ -199,14 +208,14 @@ class TaskPoller:
                     self.fail_job(job["id"])
                     return
                 try:
-                    self.download_input(job, paths)
+                    input_file = self.download_input(job, paths)
                 except InputUnavailableError:
                     # Without failing it, this job would stay the oldest CREATED
                     # job and block every job behind it
                     logger.exception("Failing job %s", job["id"])
                     self.fail_job(job["id"])
                     return
-                print(f"Stored input of job {job['id']} in {paths.input_file}")
+                print(f"Stored input of job {job['id']} in {input_file}")
             # Record locally before claiming on the server: if the server claim
             # fails, the job stays CREATED and is retried on the next poll.
             if self.job_store:

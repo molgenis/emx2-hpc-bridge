@@ -209,7 +209,14 @@ def make_download_poller(tmp_path, job):
     return poller, session, download
 
 
-PDF_JOB = {"id": "job-1", "input": {"url": "/extractJobs/api/file/Jobs/input/abc"}}
+PDF_JOB = {
+    "id": "job-1",
+    "input": {
+        "url": "/extractJobs/api/file/Jobs/input/abc",
+        "filename": "cohort-paper.pdf",
+        "extension": "pdf",
+    },
+}
 
 
 def test_claimed_job_input_is_downloaded_to_workspace(tmp_path):
@@ -217,9 +224,9 @@ def test_claimed_job_input_is_downloaded_to_workspace(tmp_path):
     poller.run(max_polls=1)
     url = session.get.call_args.args[0]
     assert url == "https://emx2.example/extractJobs/api/file/Jobs/input/abc"
-    pdf = tmp_path / "job-job-1" / "input" / "document.pdf"
+    pdf = tmp_path / "job-job-1" / "input" / "cohort-paper.pdf"
     assert pdf.read_bytes() == b"%PDF-1.7"
-    assert not pdf.with_name("document.pdf.part").exists()
+    assert not pdf.with_name("cohort-paper.pdf.part").exists()
     assert (tmp_path / "job-job-1" / "logs").is_dir()
     assert (tmp_path / "job-job-1" / "output").is_dir()
     claim = session.post.call_args.kwargs["json"]["variables"]
@@ -238,7 +245,7 @@ def test_transient_download_error_leaves_job_for_retry(tmp_path, caplog):
     poller.claim_job.assert_not_called()
     poller.fail_job.assert_not_called()
     assert poller.job_store.get("job-1") is None
-    assert not (tmp_path / "job-job-1" / "input" / "document.pdf").exists()
+    assert not (tmp_path / "job-job-1" / "input" / "cohort-paper.pdf").exists()
 
 
 def test_job_without_input_is_failed(tmp_path):
@@ -250,6 +257,18 @@ def test_job_without_input_is_failed(tmp_path):
     poller.claim_job.assert_not_called()
     poller.fail_job.assert_called_once_with("job-1")
     assert poller.job_store.get("job-1") is None
+
+
+@pytest.mark.parametrize("filename", [None, "", "../escape.pdf", "a\\b.pdf", ".."])
+def test_job_with_unusable_input_filename_is_failed(tmp_path, filename):
+    job = {"id": "job-1", "input": {**PDF_JOB["input"], "filename": filename}}
+    poller, session, _ = make_download_poller(tmp_path, job)
+    poller.claim_job = MagicMock()
+    poller.fail_job = MagicMock()
+    poller.run(max_polls=1)
+    session.get.assert_not_called()
+    poller.claim_job.assert_not_called()
+    poller.fail_job.assert_called_once_with("job-1")
 
 
 def test_missing_input_file_is_failed(tmp_path):
@@ -288,13 +307,30 @@ class FakeJobsServer:
     "bad_job, http_status",
     [
         ({"id": "bad", "input": None}, 200),
-        ({"id": "bad", "input": {"url": "/extractJobs/api/file/Jobs/input/gone"}}, 404),
+        (
+            {
+                "id": "bad",
+                "input": {
+                    "url": "/extractJobs/api/file/Jobs/input/gone",
+                    "filename": "gone.pdf",
+                    "extension": "pdf",
+                },
+            },
+            404,
+        ),
     ],
 )
 def test_unavailable_oldest_job_does_not_block_later_jobs(
     tmp_path, bad_job, http_status
 ):
-    good_job = {"id": "good", "input": {"url": "/extractJobs/api/file/Jobs/input/ok"}}
+    good_job = {
+        "id": "good",
+        "input": {
+            "url": "/extractJobs/api/file/Jobs/input/ok",
+            "filename": "good.pdf",
+            "extension": "pdf",
+        },
+    }
     server = FakeJobsServer([bad_job, good_job])
     poller, session, download = make_download_poller(tmp_path, good_job)
     session.post.side_effect = server.post
@@ -309,4 +345,4 @@ def test_unavailable_oldest_job_does_not_block_later_jobs(
         "bad": Emx2JobStatus.FAILED.value,
         "good": Emx2JobStatus.PENDING.value,
     }
-    assert (tmp_path / "job-good" / "input" / "document.pdf").exists()
+    assert (tmp_path / "job-good" / "input" / "good.pdf").exists()

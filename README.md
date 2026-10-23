@@ -55,13 +55,13 @@ cp .env.example .env
 
 ### Job directories
 
-For every claimed job the bridge creates a directory under `JOBS_DIR` and downloads the job's input PDF into it before claiming the job in EMX2:
+For every claimed job the bridge creates a directory under `JOBS_DIR` and downloads the job's input file into it, under the filename it was uploaded with before claiming the job in EMX2:
 
 ```
 <JOBS_DIR>/
 └── job-<id>/
     ├── input/
-    │   └── document.pdf
+    │   └── <filename>.<extension>
     ├── logs/        # slurm-<slurm job id>.out / .err
     └── output/      # extraction results, e.g. result.json
 ```
