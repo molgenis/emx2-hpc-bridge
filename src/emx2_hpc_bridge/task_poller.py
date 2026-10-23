@@ -192,7 +192,12 @@ class TaskPoller:
         if job:
             print(f"Found job {job['id']}")
             if self.workspace:
-                paths = self.workspace.prepare(job["id"])
+                try:
+                    paths = self.workspace.prepare(job["id"])
+                except ValueError:
+                    logger.exception("Failing job %s: invalid workspace id", job["id"])
+                    self.fail_job(job["id"])
+                    return
                 try:
                     self.download_input(job, paths)
                 except InputUnavailableError:
