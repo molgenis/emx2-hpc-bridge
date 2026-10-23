@@ -139,9 +139,13 @@ class TaskPoller:
         file_info = job.get("input") or {}
         if not file_info.get("url"):
             raise InputUnavailableError(f"Job {job['id']} has no input file")
-        input_file = paths.input_file(
-            file_info.get("filename"), file_info.get("extension")
-        )
+        try:
+            input_file = paths.input_file(
+                file_info.get("filename"), file_info.get("extension")
+            )
+        except ValueError as e:
+            # Retrying cannot fix a name the server keeps sending
+            raise InputUnavailableError(f"Job {job['id']}: {e}") from e
         # EMX2 returns file urls relative to the server
         url = urljoin(f"{self.server}/", file_info["url"])
         partial = input_file.with_name(input_file.name + ".part")

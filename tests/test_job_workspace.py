@@ -82,5 +82,20 @@ def test_input_filename_caps_length():
     assert name.endswith(".pdf")
 
 
-def test_input_filename_sanitizes_extension():
-    assert input_filename("paper", "../p df") == "paper.pdf"
+@pytest.mark.parametrize(
+    "extension, expected",
+    [
+        ("../p df", "paper.pdf"),
+        (" /.pdf", "paper.pdf"),
+        ("pdf.", "paper.pdf"),
+        ("a" * 300, "paper"),
+        ("x" * 250, "paper"),
+    ],
+)
+def test_input_filename_sanitizes_extension(extension, expected):
+    assert input_filename("paper", extension) == expected
+
+
+def test_input_filename_ignores_overlong_extension():
+    assert input_filename("x", "a" * 300) == "x"
+    assert input_filename(None, "a" * 300) == "input"

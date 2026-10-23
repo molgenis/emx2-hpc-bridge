@@ -7,6 +7,8 @@ from pathlib import Path
 # Longest stored input name; leaves room for ".part" within the usual 255-byte
 # NAME_MAX
 MAX_INPUT_NAME = 200
+# Anything longer is not a real file extension and is dropped
+MAX_EXTENSION = 16
 DEFAULT_INPUT_STEM = "input"
 UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -25,11 +27,11 @@ def input_filename(filename: str | None, extension: str | None) -> str:
 
     The name only decides where the file is stored, so it is sanitized rather
     than rejected: characters outside [A-Za-z0-9._-] become "_", leading dots
-    and dashes are dropped, the length is capped and a missing name falls back
-    to "input".
+    and dashes are dropped, the length is capped, an extension longer than
+    MAX_EXTENSION is ignored and a missing name falls back to "input".
     """
-    extension = UNSAFE_NAME_CHARS.sub("", (extension or "").strip().lstrip("."))
-    suffix = f".{extension}" if extension else ""
+    extension = UNSAFE_NAME_CHARS.sub("", extension or "").strip(".")
+    suffix = f".{extension}" if 0 < len(extension) <= MAX_EXTENSION else ""
     name = UNSAFE_NAME_CHARS.sub("_", (filename or "").strip()).lstrip(".-")
     if suffix and name.lower().endswith(suffix.lower()):
         suffix, name = name[-len(suffix) :], name[: -len(suffix)]

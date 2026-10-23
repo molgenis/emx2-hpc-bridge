@@ -6,7 +6,7 @@ import requests
 
 from emx2_hpc_bridge.emx2_status import Emx2JobStatus
 from emx2_hpc_bridge.job_store import JobStatus, JobStore
-from emx2_hpc_bridge.job_workspace import JobWorkspace
+from emx2_hpc_bridge.job_workspace import JobPaths, JobWorkspace
 from emx2_hpc_bridge.slurm_monitor import SlurmJob
 from emx2_hpc_bridge.task_poller import GraphQLError, TaskPoller
 
@@ -280,6 +280,19 @@ def test_unsafe_input_filename_is_stored_sanitized(tmp_path, filename, stored):
     assert [p.name for p in input_dir.iterdir()] == [stored]
     poller.claim_job.assert_called_once_with("job-1")
     poller.fail_job.assert_not_called()
+
+
+def test_job_with_unbuildable_input_path_is_failed(tmp_path, monkeypatch):
+    poller, session, _ = make_download_poller(tmp_path, PDF_JOB)
+    monkeypatch.setattr(
+        JobPaths, "input_file", MagicMock(side_effect=ValueError("bad name"))
+    )
+    poller.claim_job = MagicMock()
+    poller.fail_job = MagicMock()
+    poller.run(max_polls=1)
+    session.get.assert_not_called()
+    poller.claim_job.assert_not_called()
+    poller.fail_job.assert_called_once_with("job-1")
 
 
 def test_interrupted_download_leaves_no_partial_file(tmp_path, caplog):
