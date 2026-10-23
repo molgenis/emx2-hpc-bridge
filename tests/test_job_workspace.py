@@ -1,6 +1,10 @@
 import pytest
 
-from emx2_hpc_bridge.job_workspace import JobWorkspace, input_filename
+from emx2_hpc_bridge.job_workspace import (
+    MAX_INPUT_NAME,
+    JobWorkspace,
+    input_filename,
+)
 
 
 def test_prepare_creates_job_directories(tmp_path):
@@ -31,7 +35,7 @@ def test_slurm_log_args_point_to_logs_dir(tmp_path):
     ]
 
 
-@pytest.mark.parametrize("job_id", ["", ".", "..", "../etc", "a/b", "a\\b"])
+@pytest.mark.parametrize("job_id", ["", ".", "..", "../etc", "a/b", "a\\b", "a\0b"])
 def test_rejects_ids_that_escape_root(tmp_path, job_id):
     with pytest.raises(ValueError):
         JobWorkspace(tmp_path).paths(job_id)
@@ -52,8 +56,31 @@ def test_input_filename_keeps_uploaded_name(filename, extension, expected):
 
 
 @pytest.mark.parametrize(
-    "filename", [None, "", "  ", ".", "..", "../x.pdf", "a\\b.pdf"]
+    "filename, expected",
+    [
+        (None, "input.pdf"),
+        ("", "input.pdf"),
+        ("  ", "input.pdf"),
+        (".", "input.pdf"),
+        ("..", "input.pdf"),
+        (".pdf", "pdf.pdf"),
+        ("../x.pdf", "_x.pdf"),
+        ("a\\b.pdf", "a_b.pdf"),
+        ("a/b.pdf", "a_b.pdf"),
+        ("-rf.pdf", "rf.pdf"),
+        ("a\nb\0c.pdf", "a_b_c.pdf"),
+        ("my paper (v2).pdf", "my_paper_v2_.pdf"),
+    ],
 )
-def test_input_filename_rejects_unsafe_names(filename):
-    with pytest.raises(ValueError):
-        input_filename(filename, "pdf")
+def test_input_filename_sanitizes_unsafe_names(filename, expected):
+    assert input_filename(filename, "pdf") == expected
+
+
+def test_input_filename_caps_length():
+    name = input_filename("a" * 300 + ".pdf", "pdf")
+    assert len(name) == MAX_INPUT_NAME
+    assert name.endswith(".pdf")
+
+
+def test_input_filename_sanitizes_extension():
+    assert input_filename("paper", "../p df") == "paper.pdf"

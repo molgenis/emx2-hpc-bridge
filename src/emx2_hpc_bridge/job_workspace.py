@@ -1,22 +1,40 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
+
+# Longest stored input name; leaves room for ".part" within the usual 255-byte
+# NAME_MAX
+MAX_INPUT_NAME = 200
+DEFAULT_INPUT_STEM = "input"
+UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def safe_path_component(value: str | None, what: str) -> str:
+    """Return `value` if it is a single path component that cannot escape its
+    parent directory; raises ValueError otherwise."""
+    if not value or any(c in value for c in "/\\\0") or value in (".", ".."):
+        raise ValueError(f"Invalid {what}: {value!r}")
+    return value
 
 
 def input_filename(filename: str | None, extension: str | None) -> str:
     """Name for the stored input file: the uploaded file's name, with its
     extension appended when the name does not already end with it.
 
-    Raises ValueError for names that are missing or could escape input/.
+    The name only decides where the file is stored, so it is sanitized rather
+    than rejected: characters outside [A-Za-z0-9._-] become "_", leading dots
+    and dashes are dropped, the length is capped and a missing name falls back
+    to "input".
     """
-    name = (filename or "").strip()
-    if not name or "/" in name or "\\" in name or name in (".", ".."):
-        raise ValueError(f"Invalid input filename: {filename!r}")
-    extension = (extension or "").strip().lstrip(".")
-    if extension and not name.lower().endswith(f".{extension.lower()}"):
-        name = f"{name}.{extension}"
-    return name
+    extension = UNSAFE_NAME_CHARS.sub("", (extension or "").strip().lstrip("."))
+    suffix = f".{extension}" if extension else ""
+    name = UNSAFE_NAME_CHARS.sub("_", (filename or "").strip()).lstrip(".-")
+    if suffix and name.lower().endswith(suffix.lower()):
+        suffix, name = name[-len(suffix) :], name[: -len(suffix)]
+    name = name[: MAX_INPUT_NAME - len(suffix)].rstrip(".") or DEFAULT_INPUT_STEM
+    return safe_path_component(name + suffix, "input filename")
 
 
 @dataclass
@@ -50,8 +68,7 @@ class JobWorkspace:
 
     def paths(self, job_id: str) -> JobPaths:
         # The id comes from the server; never let it escape the jobs root
-        if not job_id or "/" in job_id or "\\" in job_id or job_id in (".", ".."):
-            raise ValueError(f"Invalid job id: {job_id!r}")
+        safe_path_component(job_id, "job id")
         job_dir = self.root / f"job-{job_id}"
         return JobPaths(
             root=job_dir,

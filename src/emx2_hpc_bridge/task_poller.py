@@ -128,10 +128,10 @@ class TaskPoller:
 
     def download_input(self, job: dict, paths: JobPaths) -> Path:
         """Download the job's input file into `paths.input_dir`, under the
-        filename it was uploaded with; returns the stored file's path.
+        filename it was uploaded with (sanitized); returns the stored file's path.
 
         Written to a temporary file first, so an interrupted download never
-        leaves a partial PDF behind that looks complete.
+        leaves a partial file behind that looks complete.
 
         Raises InputUnavailableError when the input is missing for good; any
         other error is assumed transient and the download is retried later.
@@ -139,25 +139,27 @@ class TaskPoller:
         file_info = job.get("input") or {}
         if not file_info.get("url"):
             raise InputUnavailableError(f"Job {job['id']} has no input file")
-        try:
-            input_file = paths.input_file(
-                file_info.get("filename"), file_info.get("extension")
-            )
-        except ValueError as e:
-            raise InputUnavailableError(f"Job {job['id']}: {e}") from e
+        input_file = paths.input_file(
+            file_info.get("filename"), file_info.get("extension")
+        )
         # EMX2 returns file urls relative to the server
         url = urljoin(f"{self.server}/", file_info["url"])
         partial = input_file.with_name(input_file.name + ".part")
-        with self.session.get(url, stream=True, timeout=60) as response:
-            if response.status_code in MISSING_INPUT_HTTP_CODES:
-                raise InputUnavailableError(
-                    f"Input of job {job['id']} not found (HTTP {response.status_code})"
-                )
-            response.raise_for_status()
-            with open(partial, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    f.write(chunk)
-        os.replace(partial, input_file)
+        try:
+            with self.session.get(url, stream=True, timeout=60) as response:
+                if response.status_code in MISSING_INPUT_HTTP_CODES:
+                    raise InputUnavailableError(
+                        f"Input of job {job['id']} not found "
+                        f"(HTTP {response.status_code})"
+                    )
+                response.raise_for_status()
+                with open(partial, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        f.write(chunk)
+            os.replace(partial, input_file)
+        finally:
+            # Never leave a stray partial file next to the inputs on a retry
+            partial.unlink(missing_ok=True)
         return input_file
 
     def run(self, max_polls: int | None = None) -> None:

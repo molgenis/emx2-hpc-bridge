@@ -259,16 +259,39 @@ def test_job_without_input_is_failed(tmp_path):
     assert poller.job_store.get("job-1") is None
 
 
-@pytest.mark.parametrize("filename", [None, "", "../escape.pdf", "a\\b.pdf", ".."])
-def test_job_with_unusable_input_filename_is_failed(tmp_path, filename):
+@pytest.mark.parametrize(
+    "filename, stored",
+    [
+        (None, "input.pdf"),
+        ("", "input.pdf"),
+        ("..", "input.pdf"),
+        ("../escape.pdf", "_escape.pdf"),
+        ("a\\b.pdf", "a_b.pdf"),
+        ("x" * 300 + ".pdf", "x" * 196 + ".pdf"),
+    ],
+)
+def test_unsafe_input_filename_is_stored_sanitized(tmp_path, filename, stored):
     job = {"id": "job-1", "input": {**PDF_JOB["input"], "filename": filename}}
-    poller, session, _ = make_download_poller(tmp_path, job)
+    poller, _, _ = make_download_poller(tmp_path, job)
     poller.claim_job = MagicMock()
     poller.fail_job = MagicMock()
     poller.run(max_polls=1)
-    session.get.assert_not_called()
+    input_dir = tmp_path / "job-job-1" / "input"
+    assert [p.name for p in input_dir.iterdir()] == [stored]
+    poller.claim_job.assert_called_once_with("job-1")
+    poller.fail_job.assert_not_called()
+
+
+def test_interrupted_download_leaves_no_partial_file(tmp_path, caplog):
+    poller, _, download = make_download_poller(tmp_path, PDF_JOB)
+    download.iter_content.side_effect = requests.ConnectionError("reset")
+    poller.claim_job = MagicMock()
+    poller.fail_job = MagicMock()
+    with caplog.at_level(logging.ERROR):
+        poller.run(max_polls=1)
+    assert list((tmp_path / "job-job-1" / "input").iterdir()) == []
     poller.claim_job.assert_not_called()
-    poller.fail_job.assert_called_once_with("job-1")
+    poller.fail_job.assert_not_called()
 
 
 def test_missing_input_file_is_failed(tmp_path):

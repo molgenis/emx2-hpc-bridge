@@ -55,13 +55,13 @@ cp .env.example .env
 
 ### Job directories
 
-For every claimed job the bridge creates a directory under `JOBS_DIR` and downloads the job's input file into it, under the filename it was uploaded with before claiming the job in EMX2:
+For every claimed job the bridge creates a directory under `JOBS_DIR` and downloads the job's input file into it, under the filename it was uploaded with before claiming the job in EMX2. The name is sanitized: characters other than letters, digits, `.`, `_` and `-` become `_`, the extension is appended only when the name does not already end with it, and a file without a name is stored as `input.<extension>`.
 
 ```
 <JOBS_DIR>/
 └── job-<id>/
     ├── input/
-    │   └── <filename>.<extension>
+    │   └── <uploaded filename>
     ├── logs/        # slurm-<slurm job id>.out / .err
     └── output/      # extraction results, e.g. result.json
 ```
