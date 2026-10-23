@@ -47,10 +47,26 @@ cp .env.example .env
 | `EMX2_POLLER_JWT_TOKEN` | JWT token used to authenticate against EMX2       | yes      |
 | `POLL_INTERVAL`         | Seconds between polls (default `30`)              | no       |
 | `DB_PATH`               | Location to store sqlitedb (hpc que queue)        | no       |
+| `JOBS_DIR`              | Directory holding a folder per claimed job (default `jobs`) | no |
 | `HPC_JOB_NAME`          | Slurm job name of the extraction job (default `cohort_extract`) | no |
 | `HPC_USER`              | Slurm user whose jobs are checked (default: current user) | no |
 
 `.env` is ignored by git; never commit real tokens.
+
+### Job directories
+
+For every claimed job the bridge creates a directory under `JOBS_DIR` and downloads the job's input PDF into it before claiming the job in EMX2:
+
+```
+<JOBS_DIR>/
+└── job-<id>/
+    ├── input/
+    │   └── document.pdf
+    ├── logs/        # slurm-<slurm job id>.out / .err
+    └── output/      # extraction results, e.g. result.json
+```
+
+On the cluster, set `JOBS_DIR=/groups/umcg-as/tmp04/projects/paper-extracting/jobs`.
 
 ### Running
 

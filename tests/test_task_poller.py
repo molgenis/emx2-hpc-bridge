@@ -4,7 +4,9 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
+from emx2_hpc_bridge.emx2_status import Emx2JobStatus
 from emx2_hpc_bridge.job_store import JobStatus, JobStore
+from emx2_hpc_bridge.job_workspace import JobWorkspace
 from emx2_hpc_bridge.slurm_monitor import SlurmJob
 from emx2_hpc_bridge.task_poller import TaskPoller
 
@@ -155,3 +157,114 @@ def test_failed_cluster_check_does_not_stop_claiming(caplog):
         poller.run(max_polls=1)
     assert "Checking Slurm queue failed" in caplog.text
     poller.job_store.add_claimed.assert_called_once_with("job-1")
+
+
+def make_download_poller(tmp_path, job):
+    poller, session, _ = make_poller([job])
+    poller.workspace = JobWorkspace(tmp_path)
+    download = session.get.return_value.__enter__.return_value
+    download.iter_content.return_value = [b"%PDF-", b"1.7"]
+    return poller, session, download
+
+
+PDF_JOB = {"id": "job-1", "input": {"url": "/extractJobs/api/file/Jobs/input/abc"}}
+
+
+def test_claimed_job_input_is_downloaded_to_workspace(tmp_path):
+    poller, session, _ = make_download_poller(tmp_path, PDF_JOB)
+    poller.run(max_polls=1)
+    url = session.get.call_args.args[0]
+    assert url == "https://emx2.example/extractJobs/api/file/Jobs/input/abc"
+    pdf = tmp_path / "job-job-1" / "input" / "document.pdf"
+    assert pdf.read_bytes() == b"%PDF-1.7"
+    assert not pdf.with_name("document.pdf.part").exists()
+    assert (tmp_path / "job-job-1" / "logs").is_dir()
+    assert (tmp_path / "job-job-1" / "output").is_dir()
+    claim = session.post.call_args.kwargs["json"]["variables"]
+    assert claim["value"][0]["status"] == {"label": "PENDING"}
+
+
+def test_transient_download_error_leaves_job_for_retry(tmp_path, caplog):
+    poller, session, download = make_download_poller(tmp_path, PDF_JOB)
+    download.status_code = 500
+    download.raise_for_status.side_effect = requests.HTTPError("500")
+    poller.job_store = JobStore(":memory:")
+    poller.claim_job = MagicMock()
+    poller.fail_job = MagicMock()
+    with caplog.at_level(logging.ERROR):
+        poller.run(max_polls=1)
+    poller.claim_job.assert_not_called()
+    poller.fail_job.assert_not_called()
+    assert poller.job_store.get("job-1") is None
+    assert not (tmp_path / "job-job-1" / "input" / "document.pdf").exists()
+
+
+def test_job_without_input_is_failed(tmp_path):
+    poller, _, _ = make_download_poller(tmp_path, {"id": "job-1", "input": None})
+    poller.job_store = JobStore(":memory:")
+    poller.claim_job = MagicMock()
+    poller.fail_job = MagicMock()
+    poller.run(max_polls=1)
+    poller.claim_job.assert_not_called()
+    poller.fail_job.assert_called_once_with("job-1")
+    assert poller.job_store.get("job-1") is None
+
+
+def test_missing_input_file_is_failed(tmp_path):
+    poller, _, download = make_download_poller(tmp_path, PDF_JOB)
+    download.status_code = 404
+    poller.claim_job = MagicMock()
+    poller.fail_job = MagicMock()
+    poller.run(max_polls=1)
+    poller.claim_job.assert_not_called()
+    poller.fail_job.assert_called_once_with("job-1")
+
+
+class FakeJobsServer:
+    """Answers the poller's GraphQL calls from an in-memory Jobs table."""
+
+    def __init__(self, jobs):
+        self.jobs = jobs  # oldest first
+        self.status = {job["id"]: Emx2JobStatus.CREATED.value for job in jobs}
+
+    def post(self, url, json, timeout):
+        response = MagicMock()
+        if json["query"].lstrip().startswith("mutation"):
+            for row in json["variables"]["value"]:
+                self.status[row["id"]] = row["status"]["label"]
+        else:
+            created = [
+                job
+                for job in self.jobs
+                if self.status[job["id"]] == Emx2JobStatus.CREATED.value
+            ]
+            response.json.return_value = {"data": {"Jobs": created[:1]}}
+        return response
+
+
+@pytest.mark.parametrize(
+    "bad_job, http_status",
+    [
+        ({"id": "bad", "input": None}, 200),
+        ({"id": "bad", "input": {"url": "/extractJobs/api/file/Jobs/input/gone"}}, 404),
+    ],
+)
+def test_unavailable_oldest_job_does_not_block_later_jobs(
+    tmp_path, bad_job, http_status
+):
+    good_job = {"id": "good", "input": {"url": "/extractJobs/api/file/Jobs/input/ok"}}
+    server = FakeJobsServer([bad_job, good_job])
+    poller, session, download = make_download_poller(tmp_path, good_job)
+    session.post.side_effect = server.post
+
+    def get(url, stream, timeout):
+        download.status_code = http_status if url.endswith("/gone") else 200
+        return session.get.return_value
+
+    session.get.side_effect = get
+    poller.run(max_polls=2)
+    assert server.status == {
+        "bad": Emx2JobStatus.FAILED.value,
+        "good": Emx2JobStatus.PENDING.value,
+    }
+    assert (tmp_path / "job-good" / "input" / "document.pdf").exists()
