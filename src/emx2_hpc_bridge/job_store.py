@@ -36,7 +36,8 @@ class JobStore:
 
     def __init__(self, path: str = "jobs.db"):
         self._conn = sqlite3.connect(path)
-        self._conn.execute("""
+        self._conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS jobs (
                 emx2_job_id TEXT PRIMARY KEY,
                 claimed_at TEXT NOT NULL,
@@ -44,7 +45,8 @@ class JobStore:
                     CHECK (status IN ('claimed', 'submitted', 'completed')),
                 slurm_job_id TEXT
             )
-            """)
+            """
+        )
         self._conn.commit()
 
     def add_claimed(self, emx2_job_id: str) -> StoredJob:
