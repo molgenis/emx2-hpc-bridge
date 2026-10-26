@@ -80,13 +80,15 @@ Each poll the bridge:
 2. checks the Slurm state (`squeue`, then `sacct` for finished jobs) of the submitted job and copies status changes to the local database and EMX2 (see the table below);
 3. submits the oldest claimed job with `sbatch`, but only when no extraction job is active: none is `submitted` locally and Slurm's queue has no `HPC_JOB_NAME` job (pending or running). It checks that EMX2 still has it as `PENDING` and that its workspace is complete. The job runs `HPC_JOB_SCRIPT --pdfs <input/document.pdf> -p all -o <output/result.xlsx>` with `RUN_DIR=<logs/run>` and output syncing disabled. A claimed job that has already ended on EMX2 (or was deleted there), or whose workspace is incomplete (the job is then set to `FAILED`), is not submitted and goes straight to `completed`.
 
+When Slurm reports a job `COMPLETED`, the bridge uploads `output/result.xlsx` to the job's `output` column and sets it to `COMPLETED` on EMX2 in a single mutation (a multipart GraphQL request). If the job completed without writing a non-empty `result.xlsx`, it is set to `FAILED` instead. If the upload fails, the job stays `submitted` and the upload is retried on the next poll.
+
 Only one extraction job runs at a time; further jobs are claimed and wait as `claimed` until the cluster is free.
 
 | Slurm state                                   | Local status | EMX2 status |
 | --------------------------------------------- | ------------ | ----------- |
 | `PENDING`, `REQUEUED`, ...                    | `submitted`  | `PENDING`   |
 | `RUNNING`, `COMPLETING`                       | `submitted`  | `RUNNING`   |
-| `COMPLETED`                                   | `completed`  | `COMPLETED` |
+| `COMPLETED`                                   | `completed`  | `COMPLETED` (result uploaded), or `FAILED` without result |
 | `CANCELLED`                                   | `completed`  | `STOPPED`   |
 | `FAILED`, `TIMEOUT`, `OUT_OF_MEMORY`, ...     | `completed`  | `FAILED`    |
 
