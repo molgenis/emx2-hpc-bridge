@@ -53,3 +53,27 @@ def test_squeue_failure_is_raised():
     run.side_effect = subprocess.CalledProcessError(1, "squeue")
     with pytest.raises(subprocess.CalledProcessError):
         monitor.list_jobs()
+
+
+def completed(stdout, returncode=0):
+    return subprocess.CompletedProcess([], returncode, stdout=stdout)
+
+
+def test_job_state_from_squeue():
+    monitor, run = make_monitor("")
+    run.side_effect = [completed("RUNNING\n")]
+    assert monitor.job_state("123") == "RUNNING"
+    assert "--jobs=123" in run.call_args.args[0]
+
+
+def test_job_state_falls_back_to_sacct_for_finished_jobs():
+    monitor, run = make_monitor("")
+    run.side_effect = [completed("", returncode=1), completed("CANCELLED by 99\n")]
+    assert monitor.job_state("123") == "CANCELLED"
+    assert run.call_args.args[0][0] == "sacct"
+
+
+def test_job_state_unknown_job_is_none():
+    monitor, run = make_monitor("")
+    run.side_effect = [completed(""), completed("")]
+    assert monitor.job_state("123") is None

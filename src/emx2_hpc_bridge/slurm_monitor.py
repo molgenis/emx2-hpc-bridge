@@ -60,3 +60,38 @@ class SlurmMonitor:
 
     def is_job_running(self) -> bool:
         return bool(self.running_jobs())
+
+    def job_state(self, slurm_job_id: str) -> str | None:
+        """Return the Slurm state of one job, e.g. RUNNING or COMPLETED.
+
+        Returns None when Slurm no longer knows the job.
+        """
+        # squeue fails with "Invalid job id" once a job has left the queue
+        result = self._run(
+            ["squeue", "--noheader", f"--jobs={slurm_job_id}", "--format=%T"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        state = result.stdout.strip() if result.returncode == 0 else ""
+        if state:
+            return state.split()[0]
+        # Finished jobs: the final state is kept in the accounting database
+        result = self._run(
+            [
+                "sacct",
+                "--noheader",
+                "--allocations",
+                "--parsable2",
+                f"--jobs={slurm_job_id}",
+                "--format=State",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        states = [line for line in result.stdout.splitlines() if line.strip()]
+        # e.g. "CANCELLED by 12345"
+        return states[0].split()[0] if states else None

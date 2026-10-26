@@ -50,6 +50,8 @@ cp .env.example .env
 | `JOBS_DIR`              | Directory holding a folder per claimed job (default `jobs`) | no |
 | `HPC_JOB_NAME`          | Slurm job name of the extraction job (default `cohort_extract`) | no |
 | `HPC_USER`              | Slurm user whose jobs are checked (default: current user) | no |
+| `HPC_SCRIPT_DIR`        | paper-extracting checkout to submit jobs from; without it claimed jobs are not submitted | on the cluster |
+| `HPC_JOB_SCRIPT`        | sbatch script in `HPC_SCRIPT_DIR` (default `run_cluster_cohort.sbatch`) | no |
 
 `.env` is ignored by git; never commit real tokens.
 
@@ -63,10 +65,32 @@ For every claimed job the bridge creates a directory under `JOBS_DIR` and downlo
     ├── input/
     │   └── document.pdf
     ├── logs/        # slurm-<slurm job id>.out / .err
-    └── output/      # extraction results, e.g. result.json
+    │   └── run/     # paper-extracting run artifacts and model server logs
+    └── output/
+        └── result.xlsx
 ```
 
 On the cluster, set `JOBS_DIR=/groups/umcg-as/tmp04/projects/paper-extracting/jobs`.
+
+### Job lifecycle
+
+Each poll the bridge:
+
+1. claims the oldest `CREATED` job (workspace prepared, input downloaded, status `PENDING` on EMX2);
+2. checks the Slurm state (`squeue`, then `sacct` for finished jobs) of the submitted job and copies status changes to the local database and EMX2 (see the table below);
+3. submits the oldest claimed job with `sbatch`, but only when no extraction job is active: none is `submitted` locally and Slurm's queue has no `HPC_JOB_NAME` job (pending or running). It checks that EMX2 still has it as `PENDING` and that its workspace is complete. The job runs `HPC_JOB_SCRIPT --pdfs <input/document.pdf> -p all -o <output/result.xlsx>` with `RUN_DIR=<logs/run>` and output syncing disabled. A claimed job that has already ended on EMX2 (or was deleted there), or whose workspace is incomplete (the job is then set to `FAILED`), is not submitted and goes straight to `completed`.
+
+Only one extraction job runs at a time; further jobs are claimed and wait as `claimed` until the cluster is free.
+
+| Slurm state                                   | Local status | EMX2 status |
+| --------------------------------------------- | ------------ | ----------- |
+| `PENDING`, `REQUEUED`, ...                    | `submitted`  | `PENDING`   |
+| `RUNNING`, `COMPLETING`                       | `submitted`  | `RUNNING`   |
+| `COMPLETED`                                   | `completed`  | `COMPLETED` |
+| `CANCELLED`                                   | `completed`  | `STOPPED`   |
+| `FAILED`, `TIMEOUT`, `OUT_OF_MEMORY`, ...     | `completed`  | `FAILED`    |
+
+Locally a job is only `claimed` (not yet submitted), `submitted` (pending or running on the cluster) or `completed` (no longer pending or running); whether it succeeded is kept on EMX2.
 
 ### Running
 
