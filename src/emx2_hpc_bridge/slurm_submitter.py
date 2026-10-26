@@ -21,7 +21,7 @@ class SlurmSubmitter:
         job_name: str = DEFAULT_JOB_NAME,
         run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     ):
-        # The sbatch script cds into its submit dir and expects the repo there
+        # paper-extracting checkout; its sbatch script needs it as working dir
         self.script_dir = Path(script_dir).absolute()
         self.script = self.script_dir / script
         self.job_name = job_name
@@ -61,6 +61,7 @@ class SlurmSubmitter:
         try:
             result = self._run(
                 self.command(paths),
+                cwd=self.script_dir,
                 capture_output=True,
                 text=True,
                 timeout=60,

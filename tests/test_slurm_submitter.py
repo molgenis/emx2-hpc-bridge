@@ -68,3 +68,10 @@ def test_comma_in_path_is_rejected(tmp_path):
     paths = JobWorkspace(tmp_path / "a,b").paths("7")
     with pytest.raises(ValueError):
         submitter.command(paths)
+
+
+def test_sbatch_runs_from_script_dir(tmp_path):
+    # run_cluster_cohort.sbatch cds into $SLURM_SUBMIT_DIR, the sbatch cwd
+    submitter, paths, run = make_submitter(tmp_path)
+    submitter.submit(paths)
+    assert run.call_args.kwargs["cwd"] == tmp_path / "paper-extracting"
