@@ -1,3 +1,4 @@
+import json as jsonlib
 import logging
 from unittest.mock import MagicMock
 
@@ -268,11 +269,20 @@ class FakeJobsServer:
     def __init__(self, jobs):
         self.jobs = jobs  # oldest first
         self.status = {job["id"]: Emx2JobStatus.CREATED.value for job in jobs}
+        self.outputs = {}  # job id -> (filename, content) of uploaded results
 
-    def post(self, url, json, timeout):
+    def post(self, url, json=None, timeout=None, data=None, files=None):
+        if data is not None:  # multipart upload
+            json = {
+                "query": data["query"],
+                "variables": jsonlib.loads(data["variables"]),
+            }
         if is_mutation(json):
             for row in json["variables"]["value"]:
                 self.status[row["id"]] = row["status"]["label"]
+                if "output" in row:
+                    filename, f, _ = files[row["output"]]
+                    self.outputs[row["id"]] = (filename, f.read())
             return mutation_ok()
         response = MagicMock()
         created = [
@@ -328,6 +338,12 @@ class FakeSlurm:
     def job_state(self, slurm_job_id):
         return self.states.get(slurm_job_id)
 
+    def complete(self, slurm_job_id, result=b"xlsx"):
+        """Finish a job successfully, writing its result like the extraction."""
+        paths = self.submitted[int(slurm_job_id) - 100]
+        paths.output_file.write_bytes(result)
+        self.states[slurm_job_id] = "COMPLETED"
+
     def list_jobs(self):
         return [
             SlurmJob(slurm_job_id, "cohort_extract", state, "0:00")
@@ -340,8 +356,8 @@ class FakeSlurm:
 
 
 class FakeJobsServerWithLookup(FakeJobsServer):
-    def post(self, url, json, timeout):
-        job_filter = (json.get("variables") or {}).get("filter", {})
+    def post(self, url, json=None, timeout=None, data=None, files=None):
+        job_filter = ((json or {}).get("variables") or {}).get("filter", {})
         if "id" in job_filter:
             job_id = job_filter["id"]["equals"][0]
             response = MagicMock()
@@ -350,7 +366,7 @@ class FakeJobsServerWithLookup(FakeJobsServer):
                 jobs = [{"id": job_id, "status": {"label": self.status[job_id]}}]
             response.json.return_value = {"data": {"Jobs": jobs}}
             return response
-        return super().post(url, json, timeout)
+        return super().post(url, json, timeout, data, files)
 
 
 def make_submit_poller(tmp_path, jobs=(PDF_JOB,)):
@@ -440,7 +456,10 @@ def test_slurm_state_is_synced_to_store_and_server(
 ):
     poller, server, slurm = make_submit_poller(tmp_path)
     poller.run(max_polls=1)
-    slurm.states["100"] = slurm_state
+    if slurm_state == "COMPLETED":
+        slurm.complete("100")
+    else:
+        slurm.states["100"] = slurm_state
     poller.update_job_statuses()
     assert poller.job_store.get("job-1").status is local
     assert server.status["job-1"] == remote.value
@@ -449,7 +468,7 @@ def test_slurm_state_is_synced_to_store_and_server(
 def test_finished_jobs_are_no_longer_polled(tmp_path):
     poller, server, slurm = make_submit_poller(tmp_path)
     poller.run(max_polls=1)
-    slurm.states["100"] = "COMPLETED"
+    slurm.complete("100")
     poller.update_job_statuses()
     slurm.job_state = MagicMock()
     poller.update_job_statuses()
@@ -459,14 +478,70 @@ def test_finished_jobs_are_no_longer_polled(tmp_path):
 def test_failed_server_update_keeps_local_status_for_retry(tmp_path):
     poller, server, slurm = make_submit_poller(tmp_path)
     poller.run(max_polls=1)
-    slurm.states["100"] = "COMPLETED"
-    poller.set_status = MagicMock(side_effect=requests.ConnectionError("boom"))
+    slurm.complete("100")
+    poller.post_result = MagicMock(side_effect=requests.ConnectionError("boom"))
     poller.update_job_statuses()
     assert poller.job_store.get("job-1").status is JobStatus.SUBMITTED
-    del poller.set_status
+    assert server.status["job-1"] == Emx2JobStatus.PENDING.value
+    del poller.post_result
     poller.update_job_statuses()
     assert poller.job_store.get("job-1").status is JobStatus.COMPLETED
     assert server.status["job-1"] == Emx2JobStatus.COMPLETED.value
+
+
+def test_result_is_posted_to_output_column(tmp_path):
+    poller, server, slurm = make_submit_poller(tmp_path)
+    poller.run(max_polls=1)
+    slurm.complete("100", result=b"PK spreadsheet")
+    poller.run(max_polls=1)
+    assert server.outputs == {"job-1": ("result.xlsx", b"PK spreadsheet")}
+    assert server.status["job-1"] == Emx2JobStatus.COMPLETED.value
+    assert poller.job_store.get("job-1").status is JobStatus.COMPLETED
+
+
+def test_result_upload_is_multipart_graphql_request(tmp_path):
+    poller, server, slurm = make_submit_poller(tmp_path)
+    poller.run(max_polls=1)
+    slurm.complete("100")
+    poller.session.post.reset_mock()
+    poller.update_job_statuses()
+    _, kwargs = poller.session.post.call_args
+    row = jsonlib.loads(kwargs["data"]["variables"])["value"][0]
+    assert row["output"] in kwargs["files"]
+    assert kwargs["data"]["query"].lstrip().startswith("mutation")
+
+
+@pytest.mark.parametrize("result", [None, b""])
+def test_completed_job_without_result_is_failed(tmp_path, caplog, result):
+    poller, server, slurm = make_submit_poller(tmp_path)
+    poller.run(max_polls=1)
+    if result is not None:
+        slurm.submitted[0].output_file.write_bytes(result)
+    slurm.states["100"] = "COMPLETED"
+    with caplog.at_level(logging.ERROR):
+        poller.update_job_statuses()
+    assert "completed without writing" in caplog.text
+    assert server.status["job-1"] == Emx2JobStatus.FAILED.value
+    assert server.outputs == {}
+    assert poller.job_store.get("job-1").status is JobStatus.COMPLETED
+
+
+def test_rejected_result_upload_is_retried(tmp_path, caplog):
+    poller, server, slurm = make_submit_poller(tmp_path)
+    poller.run(max_polls=1)
+    slurm.complete("100")
+    post = poller.session.post.side_effect
+    poller.session.post.side_effect = lambda url, **kwargs: (
+        mutation_rejected("upload failed") if "files" in kwargs else post(url, **kwargs)
+    )
+    with caplog.at_level(logging.ERROR):
+        poller.update_job_statuses()
+    assert "Posting result of job job-1 was rejected" in caplog.text
+    assert poller.job_store.get("job-1").status is JobStatus.SUBMITTED
+    poller.session.post.side_effect = post
+    poller.update_job_statuses()
+    assert server.outputs["job-1"][0] == "result.xlsx"
+    assert poller.job_store.get("job-1").status is JobStatus.COMPLETED
 
 
 def test_unchanged_slurm_state_is_not_pushed_again(tmp_path):
@@ -503,7 +578,7 @@ def test_only_one_extraction_job_is_submitted_at_a_time(tmp_path):
     poller.run(max_polls=1)
     assert len(slurm.submitted) == 1
 
-    slurm.states["100"] = "COMPLETED"
+    slurm.complete("100")
     poller.run(max_polls=1)
     assert poller.job_store.get("job-1").status is JobStatus.COMPLETED
     assert poller.job_store.get("job-2").status is JobStatus.SUBMITTED

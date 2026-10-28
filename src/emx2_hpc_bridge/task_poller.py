@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -10,7 +11,7 @@ import requests
 
 from .emx2_status import Emx2JobStatus
 from .job_store import JobStatus, JobStore, StoredJob
-from .job_workspace import JobPaths, JobWorkspace
+from .job_workspace import OUTPUT_FILENAME, JobPaths, JobWorkspace
 from .slurm_monitor import SlurmMonitor
 from .slurm_submitter import SlurmSubmitter
 
@@ -87,6 +88,15 @@ FINAL_SERVER_STATUSES = {
 # The input file is gone for good; retrying will not help
 MISSING_INPUT_HTTP_CODES = (404, 410)
 
+UPDATE_JOBS_MUTATION = """
+mutation update($value:[JobsInput]){update(Jobs:$value){message}}
+"""
+
+# Multipart part holding the result; EMX2 swaps a variable whose value equals
+# a part's name for that part
+RESULT_PART = "resultFile"
+XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
 
 class InputUnavailableError(Exception):
     """The job's input can never be downloaded, so the job cannot run."""
@@ -141,13 +151,31 @@ class TaskPoller:
         jobs = data.get("Jobs") or []
         return jobs[0] if jobs else None
 
-    def _graphql(self, query: str, variables: dict, description: str) -> dict:
-        """Post a GraphQL request and return its "data"."""
-        response = self.session.post(
-            self.url,
-            json={"query": query, "variables": variables},
-            timeout=30,
-        )
+    def _graphql(
+        self,
+        query: str,
+        variables: dict,
+        description: str,
+        files: dict | None = None,
+    ) -> dict:
+        """Post a GraphQL request and return its "data".
+
+        With `files`, the request is sent as multipart form data so the files
+        can be referenced from `variables` by their part name.
+        """
+        if files:
+            response = self.session.post(
+                self.url,
+                data={"query": query, "variables": json.dumps(variables)},
+                files=files,
+                timeout=300,
+            )
+        else:
+            response = self.session.post(
+                self.url,
+                json={"query": query, "variables": variables},
+                timeout=30,
+            )
         response.raise_for_status()
         # EMX2 reports a rejected request as HTTP 200 with an "errors" field
         body = response.json()
@@ -159,12 +187,30 @@ class TaskPoller:
 
     def set_status(self, job_id: str, status: Emx2JobStatus) -> None:
         """Set the status of a job on the server."""
-        query = """
-        mutation update($value:[JobsInput]){update(Jobs:$value){message}}
-        """
         label = Emx2JobStatus(status).value
         variables = {"value": [{"id": job_id, "status": {"label": label}}]}
-        self._graphql(query, variables, f"Setting job {job_id} to {label}")
+        self._graphql(
+            UPDATE_JOBS_MUTATION, variables, f"Setting job {job_id} to {label}"
+        )
+
+    def post_result(self, job_id: str, paths: JobPaths) -> None:
+        """Upload the job's result to its output column and mark it COMPLETED.
+
+        Both in one mutation, so the server never has a COMPLETED job without
+        its result.
+        """
+        row = {
+            "id": job_id,
+            "status": {"label": Emx2JobStatus.COMPLETED.value},
+            "output": RESULT_PART,
+        }
+        with open(paths.output_file, "rb") as f:
+            self._graphql(
+                UPDATE_JOBS_MUTATION,
+                {"value": [row]},
+                f"Posting result of job {job_id}",
+                files={RESULT_PART: (OUTPUT_FILENAME, f, XLSX_CONTENT_TYPE)},
+            )
 
     def fetch_job_status(self, job_id: str) -> Emx2JobStatus | None:
         """Return the job's status on the server, or None if the job is gone."""
@@ -327,7 +373,9 @@ class TaskPoller:
                 stored.slurm_job_id,
             )
             return
-        if self._reported.get(stored.emx2_job_id) is not server_status:
+        if server_status is Emx2JobStatus.COMPLETED and self.workspace:
+            self.complete_job(stored)
+        elif self._reported.get(stored.emx2_job_id) is not server_status:
             self.set_status(stored.emx2_job_id, server_status)
             self._reported[stored.emx2_job_id] = server_status
             print(
@@ -338,6 +386,25 @@ class TaskPoller:
         if server_status in FINAL_SERVER_STATUSES:
             self.job_store.update_status(stored.emx2_job_id, JobStatus.COMPLETED)
             self._reported.pop(stored.emx2_job_id, None)
+
+    def complete_job(self, stored: StoredJob) -> None:
+        """Post the result of a job that Slurm completed.
+
+        A job that completed without writing its result is set to FAILED.
+        """
+        paths = self.workspace.paths(stored.emx2_job_id)
+        output = paths.output_file
+        if output.is_file() and output.stat().st_size > 0:
+            self.post_result(stored.emx2_job_id, paths)
+            print(f"Posted result of job {stored.emx2_job_id} from {output}")
+        else:
+            logger.error(
+                "Failing job %s: Slurm job %s completed without writing %s",
+                stored.emx2_job_id,
+                stored.slurm_job_id,
+                output,
+            )
+            self.fail_job(stored.emx2_job_id)
 
     def _poll_once(self) -> None:
         self.check_cluster()
