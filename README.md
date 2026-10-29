@@ -55,6 +55,8 @@ cp .env.example .env
 
 `.env` is ignored by git; never commit real tokens.
 
+The EMX2 side (schema, tables, poller account and user roles) is set up as described in [config-emx2/README.md](config-emx2/README.md).
+
 ### Job directories
 
 For every claimed job the bridge creates a directory under `JOBS_DIR` and downloads the job's input PDF into it before claiming the job in EMX2:
