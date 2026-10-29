@@ -55,7 +55,7 @@ cp .env.example .env
 
 `.env` is ignored by git; never commit real tokens.
 
-The EMX2 side (schema, tables, poller account and user roles) is set up as described in [config-emx2/README.md](config-emx2/README.md).
+The EMX2 side (a dedicated private schema, its tables, the poller account and user roles) is set up as described in [config-emx2/README.md](config-emx2/README.md).
 
 ### Job directories
 
