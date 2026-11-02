@@ -16,3 +16,4 @@ build/
 .vscode/settings.json
 *.db
 bridge.log
+cron.log

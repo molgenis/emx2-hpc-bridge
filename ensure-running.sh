@@ -1,14 +1,19 @@
 #!/bin/bash
+# strict mode: fail fast instead of continuing after errors
+set -euo pipefail
+# log timestamp and line number when a command fails
+trap 'echo "$(date "+%F %T") failed at line $LINENO" >&2' ERR
+
+# move to the directory of this script, if that fails, exit with error code 1
 cd /groups/umcg-as/tmp04/projects/paper-extracting/Repositories/emx2-hpc-bridge || exit 1
 
-# Already running? Then do nothing.
-if pgrep -f ".venv/bin/emx2-hpc-bridge" > /dev/null; then
+# already running Then do nothing.
+if pgrep -u "$USER" -f "emx2_hpc_bridge\.main" > /dev/null; then
   exit 0
 fi
 
-# If the bridge needs env vars/config, load them here, e.g.:
-set -a; source .env; set +a
+# log that we are starting the bridge
+echo "$(date) starting emx2-hpc-bridge" >> emx2_hpc_bridge.log
 
-echo "$(date) starting emx2-hpc-bridge" >> bridge.log
-export PYTHONUNBUFFERED=1
-nohup .venv/bin/python -u -m emx2_hpc_bridge.main >> bridge.log 2>&1 &
+# start bridge in background, append all output to bridge.log
+.venv/bin/python -u -m emx2_hpc_bridge.main >> emx2_hpc_bridge.log 2>&1 < /dev/null &
