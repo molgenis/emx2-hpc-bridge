@@ -265,7 +265,7 @@ class TaskPoller:
         """
         polls = 0
         while max_polls is None or polls < max_polls:
-            print(f"Polling for jobs (poll {polls + 1})...")
+            logger.info("Polling for jobs (poll %d)...", polls + 1)
             try:
                 self._poll_once()
             except Exception:
@@ -288,9 +288,11 @@ class TaskPoller:
             return None
         if running:
             for job in running:
-                print(f"Extraction job {job.job_id} running on cluster ({job.elapsed})")
+                logger.info(
+                    "Extraction job %s running on cluster (%s)", job.job_id, job.elapsed
+                )
         else:
-            print("No extraction job running on cluster")
+            logger.info("No extraction job running on cluster")
         return bool(running)
 
     def extraction_active(self) -> bool:
@@ -338,7 +340,9 @@ class TaskPoller:
         server_status = self.fetch_job_status(job_id)
         if server_status is not Emx2JobStatus.PENDING:
             if server_status is None or server_status in FINAL_SERVER_STATUSES:
-                print(f"Not submitting job {job_id}: {server_status} on server")
+                logger.info(
+                    "Not submitting job %s: %s on server", job_id, server_status
+                )
                 self.job_store.update_status(job_id, JobStatus.COMPLETED)
             return None
         paths = self.workspace.paths(job_id)
@@ -349,7 +353,7 @@ class TaskPoller:
             return None
         slurm_job_id = self.submitter.submit(paths)
         self.job_store.set_submitted(job_id, slurm_job_id)
-        print(f"Submitted job {job_id} as Slurm job {slurm_job_id}")
+        logger.info("Submitted job %s as Slurm job %s", job_id, slurm_job_id)
         return slurm_job_id
 
     def update_job_statuses(self) -> None:
@@ -378,8 +382,11 @@ class TaskPoller:
         elif self._reported.get(stored.emx2_job_id) is not server_status:
             self.set_status(stored.emx2_job_id, server_status)
             self._reported[stored.emx2_job_id] = server_status
-            print(
-                f"Job {stored.emx2_job_id} (Slurm job {stored.slurm_job_id}) is {state}"
+            logger.info(
+                "Job %s (Slurm job %s) is %s",
+                stored.emx2_job_id,
+                stored.slurm_job_id,
+                state,
             )
         # Completed only once the server knows the outcome: if setting it fails,
         # the job stays SUBMITTED and the update is retried on the next poll
@@ -396,7 +403,7 @@ class TaskPoller:
         output = paths.output_file
         if output.is_file() and output.stat().st_size > 0:
             self.post_result(stored.emx2_job_id, paths)
-            print(f"Posted result of job {stored.emx2_job_id} from {output}")
+            logger.info("Posted result of job %s from %s", stored.emx2_job_id, output)
         else:
             logger.error(
                 "Failing job %s: Slurm job %s completed without writing %s",
@@ -419,7 +426,7 @@ class TaskPoller:
     def _claim_next_job(self) -> None:
         job = self.fetch_next_job()
         if job:
-            print(f"Found job {job['id']}")
+            logger.info("Found job %s", job["id"])
             if self.workspace:
                 try:
                     paths = self.workspace.prepare(job["id"])
@@ -435,10 +442,10 @@ class TaskPoller:
                     logger.exception("Failing job %s", job["id"])
                     self.fail_job(job["id"])
                     return
-                print(f"Stored input of job {job['id']} in {paths.input_file}")
+                logger.info("Stored input of job %s in %s", job["id"], paths.input_file)
             # Record locally before claiming on the server: if the server claim
             # fails, the job stays CREATED and is retried on the next poll.
             if self.job_store:
                 self.job_store.add_claimed(job["id"])
             claim_job = self.claim_job(job["id"])
-            print(f"Claimed job {claim_job}")
+            logger.info("Claimed job %s", claim_job)

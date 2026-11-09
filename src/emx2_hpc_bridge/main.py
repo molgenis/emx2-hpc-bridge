@@ -1,4 +1,5 @@
 import logging
+import sys
 
 from .config import Config
 from .job_store import JobStore
@@ -7,13 +8,19 @@ from .slurm_monitor import SlurmMonitor
 from .slurm_submitter import SlurmSubmitter
 from .task_poller import TaskPoller
 
+logger = logging.getLogger(__name__)
+
 
 def main():
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
     )
-    print(f"Connecting to {Config.emx2_server} with schema {Config.emx2_schema}")
-    print(f"Polling every {Config.poll_interval} seconds")
+    logger.info(
+        "Connecting to %s with schema %s", Config.emx2_server, Config.emx2_schema
+    )
+    logger.info("Polling every %s seconds", Config.poll_interval)
 
     submitter = None
     if Config.hpc_script_dir:
@@ -22,9 +29,11 @@ def main():
             script=Config.hpc_job_script,
             job_name=Config.hpc_job_name,
         )
-        print(f"Submitting jobs with {submitter.script}")
+        logger.info("Submitting jobs with %s", submitter.script)
     else:
-        print("HPC_SCRIPT_DIR not set: claimed jobs are not submitted to Slurm")
+        logger.warning(
+            "HPC_SCRIPT_DIR not set: claimed jobs are not submitted to Slurm"
+        )
 
     poller = TaskPoller(
         server=Config.emx2_server,
