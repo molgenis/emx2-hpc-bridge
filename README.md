@@ -112,9 +112,10 @@ On the cluster the bridge is kept alive by a cron job that runs `ensure-running.
 
 Check with `crontab -l` and follow the output with `tail -f bridge.log`. To restart the bridge (e.g. after changing `.env`), stop it and run the script:
 
-```bash
+~~~bash
 pkill -f "emx2_hpc_bridge.main"
 ./ensure-running.sh
+~~~
 
 ### Tests, linting and formatting
 
