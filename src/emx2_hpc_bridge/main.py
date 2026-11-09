@@ -1,5 +1,4 @@
 import logging
-import sys
 
 from .config import Config
 from .job_store import JobStore
@@ -13,9 +12,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stdout,
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     logger.info(
         "Connecting to %s with schema %s", Config.emx2_server, Config.emx2_schema
