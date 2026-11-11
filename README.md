@@ -104,6 +104,21 @@ With the virtual environment active, start the poller with:
 emx2-hpc-bridge
 ```
 
+### Keeping it running with cron
+
+On the cluster the bridge is kept alive by a cron job that runs `ensure-running.sh` every 30 minutes; the script starts the bridge if it is not running and writes its output to `emx2_hpc_bridge.log`. Add it to your crontab (`crontab -e`):
+
+```
+*/30 * * * * /groups/umcg-as/tmp04/projects/paper-extracting/Repositories/emx2-hpc-bridge/ensure-running.sh >> /groups/umcg-as/tmp04/projects/paper-extracting/Repositories/emx2-hpc-bridge/emx2_hpc_bridge.log 2>&1
+```
+
+Check with `crontab -l` and follow the output with `tail -f emx2_hpc_bridge.log`. To restart the bridge (e.g. after changing `.env`), stop it and run the script:
+
+~~~bash
+pkill -f "emx2_hpc_bridge.main"
+./ensure-running.sh
+~~~
+
 ### Tests, linting and formatting
 
 These are the same checks that run in CircleCI (see [.circleci/config.yml](.circleci/config.yml)):
