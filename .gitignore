@@ -15,5 +15,4 @@ build/
 *.egg-info/
 .vscode/settings.json
 *.db
-bridge.log
-cron.log
+*.log
