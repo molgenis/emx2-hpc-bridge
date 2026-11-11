@@ -104,7 +104,7 @@ emx2-hpc-bridge
 
 ### Keeping it running with cron
 
-On the cluster the bridge is kept alive by a cron job that runs `ensure-running.sh` every 30 minutes; the script starts the bridge if it is not running and writes its output to `bridge.log`. Add it to your crontab (`crontab -e`):
+On the cluster the bridge is kept alive by a cron job that runs `ensure-running.sh` every 30 minutes; the script starts the bridge if it is not running and writes its output to `emx2_hpc_bridge.log`. Add it to your crontab (`crontab -e`):
 
 ```
 */30 * * * * /groups/umcg-as/tmp04/projects/paper-extracting/Repositories/emx2-hpc-bridge/ensure-running.sh >> /groups/umcg-as/tmp04/projects/paper-extracting/Repositories/emx2-hpc-bridge/cron.log 2>&1
