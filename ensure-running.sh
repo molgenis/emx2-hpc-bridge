@@ -2,7 +2,7 @@
 # strict mode: fail fast instead of continuing after errors
 set -euo pipefail
 # log timestamp and line number when a command fails
-trap 'echo "$(date "+%F %T") failed at line $LINENO" >&2' ERR
+trap 'rc=$?; [ $rc -ne 0 ] && echo "$(date "+%F %T") exited with $rc (line $LINENO)" >&2' EXIT
 
 # move to the directory of this script, if that fails, exit with error code 1
 cd /groups/umcg-as/tmp04/projects/paper-extracting/Repositories/emx2-hpc-bridge || exit 1
